@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-from analysis_engine.extraction.models import Symbol
+from analysis_engine.extraction.models import CallSite, Import, Symbol
 
 
 @dataclass(frozen=True)
@@ -11,3 +11,6 @@ class FileSummary:
     parse_ok: bool | None  # None when the file's language has no parser yet
     size_bytes: int
     symbols: list[Symbol] = field(default_factory=list)
+    content_hash: str | None = None  # sha256 hex digest; None only for an unreadable file
+    imports: list[Import] = field(default_factory=list)
+    calls: list[CallSite] = field(default_factory=list)

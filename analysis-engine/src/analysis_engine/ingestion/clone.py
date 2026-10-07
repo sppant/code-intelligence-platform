@@ -67,6 +67,30 @@ def clone_repository(ref: RepositoryRef, dest: Path, timeout_seconds: int) -> No
         raise CloneFailedError(f"git clone failed for {ref.clone_url}: {result.stderr.strip()}")
 
 
+def get_commit_sha(workspace: Path) -> str | None:
+    """Best-effort `git rev-parse HEAD` for a freshly-cloned workspace.
+
+    Purely informational (displayed in the UI, used by incremental analysis
+    only as a nice-to-show value, never as the diffing mechanism itself --
+    see pipeline.py's content-hash-based previous_files) -- returns None on
+    any failure rather than raising, since a repository/clone that already
+    succeeded shouldn't fail the whole analysis just because this couldn't
+    be determined.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+            capture_output=True,
+            timeout=10,
+            text=True,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
 def enforce_size_cap(path: Path, max_size_mb: int) -> None:
     """Walk `path` and abort if its total size exceeds `max_size_mb`.
 
