@@ -36,6 +36,9 @@ export const REPOSITORY_OVERVIEW_QUERY = `
       latestAnalysis {
         id
         createdAt
+        isIncremental
+        filesReused
+        filesReprocessed
         statistics {
           totalFiles
           totalLines
@@ -195,6 +198,9 @@ export interface Repository {
   latestAnalysis: {
     id: string;
     createdAt: string;
+    isIncremental: boolean;
+    filesReused: number | null;
+    filesReprocessed: number | null;
     statistics: RepositoryStatistics;
   } | null;
 }

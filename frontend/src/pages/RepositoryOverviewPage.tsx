@@ -51,6 +51,14 @@ export function RepositoryOverviewPage() {
             <StatCard label="Dependency edges" value={stats.totalDependencyEdges} />
           </div>
 
+          {repository.latestAnalysis?.isIncremental && (
+            <p style={{ color: "#555", fontStyle: "italic", margin: "0 0 1.5rem" }}>
+              Incremental analysis: {repository.latestAnalysis.filesReused}/
+              {(repository.latestAnalysis.filesReused ?? 0) + (repository.latestAnalysis.filesReprocessed ?? 0)}{" "}
+              files reused (unchanged since the last analysis).
+            </p>
+          )}
+
           <h2>Languages</h2>
           <ul>
             {Object.entries(stats.languages).map(([language, count]) => (
