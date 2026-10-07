@@ -154,6 +154,9 @@ class Analysis:
     id: uuid.UUID
     commit_sha: str | None
     created_at: datetime
+    is_incremental: bool
+    files_reused: int | None
+    files_reprocessed: int | None
     statistics: RepositoryStatistics
     files: list[FileNode]
     dependency_edges: list[DependencyEdge]
@@ -240,6 +243,9 @@ async def build_analysis_type(session: AsyncSession, analysis_row: AnalysisModel
         id=analysis_row.id,
         commit_sha=analysis_row.commit_sha,
         created_at=analysis_row.created_at,
+        is_incremental=analysis_row.is_incremental,
+        files_reused=analysis_row.files_reused,
+        files_reprocessed=analysis_row.files_reprocessed,
         statistics=statistics,
         files=files,
         dependency_edges=dependency_edges,

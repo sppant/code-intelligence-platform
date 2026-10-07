@@ -23,6 +23,9 @@ async def _make_analysis() -> dict:
             languages={"python": 1},
             total_files=2,
             total_lines=10,
+            is_incremental=True,
+            files_reused=1,
+            files_reprocessed=1,
         )
         session.add(analysis)
         await session.flush()
@@ -199,6 +202,29 @@ async def test_impact_analysis_for_called_symbol():
         assert {s["name"] for s in impact["affectedSymbols"]} == {"do_thing"}
         assert impact["affectedTests"] == []
         assert "Missing test coverage" in impact["riskIndicators"]
+    finally:
+        await _cleanup(ids)
+
+
+async def test_analysis_exposes_incremental_fields():
+    ids = await _make_analysis()
+    try:
+        async with async_session_factory() as session:
+            result = await schema.execute(
+                """
+                query($aid: UUID!) {
+                  analysis(id: $aid) { isIncremental filesReused filesReprocessed }
+                }
+                """,
+                variable_values={"aid": str(ids["analysis_id"])},
+                context_value={"session": session, "background_tasks": None},
+            )
+        assert result.errors is None
+        assert result.data["analysis"] == {
+            "isIncremental": True,
+            "filesReused": 1,
+            "filesReprocessed": 1,
+        }
     finally:
         await _cleanup(ids)
 

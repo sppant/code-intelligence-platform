@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, ForeignKey, func
+from sqlalchemy import JSON, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.db import Base
@@ -46,6 +46,9 @@ class Analysis(Base):
     languages: Mapped[dict] = mapped_column(JSON, default=dict)
     total_files: Mapped[int] = mapped_column(default=0)
     total_lines: Mapped[int] = mapped_column(default=0)
+    is_incremental: Mapped[bool] = mapped_column(default=False)
+    files_reused: Mapped[int | None] = mapped_column(default=None)
+    files_reprocessed: Mapped[int | None] = mapped_column(default=None)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     analysis_job: Mapped["AnalysisJob"] = relationship(back_populates="analysis")
@@ -64,6 +67,15 @@ class File(Base):
     line_count: Mapped[int] = mapped_column(default=0)
     parse_ok: Mapped[bool | None] = mapped_column(default=None)
     size_bytes: Mapped[int | None] = mapped_column(default=None)
+
+    # Incremental-analysis cache: content_hash lets the next analysis detect
+    # this file is unchanged; raw_imports/raw_calls (not just resolved
+    # edges) let that next run feed this file's extraction straight back
+    # into resolve_relationships/resolve_calls without re-parsing. Nullable
+    # because rows from before this column existed have nothing to reuse.
+    content_hash: Mapped[str | None] = mapped_column(String(64), default=None)
+    raw_imports: Mapped[list | None] = mapped_column(JSON, default=None)
+    raw_calls: Mapped[list | None] = mapped_column(JSON, default=None)
 
     analysis: Mapped["Analysis"] = relationship(back_populates="files")
     symbols: Mapped[list["Symbol"]] = relationship(back_populates="file")
