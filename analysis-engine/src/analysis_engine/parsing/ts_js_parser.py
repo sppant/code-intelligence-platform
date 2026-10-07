@@ -9,7 +9,7 @@ _TS_PARSER = Parser(Language(tstypescript.language_typescript()))
 _TSX_PARSER = Parser(Language(tstypescript.language_tsx()))
 
 
-def _parser_for(path: Path) -> Parser:
+def parser_for(path: Path) -> Parser:
     suffix = path.suffix.lower()
     if suffix == ".tsx":
         return _TSX_PARSER
@@ -23,8 +23,8 @@ def parse_ok(source: bytes, path: Path) -> bool:
 
     tree-sitter is error-tolerant and always returns *a* tree, so "parse_ok"
     means "no ERROR node", not "parse succeeded/failed" in the ast.parse
-    sense. Day 2 walks this same tree via `.query()` to extract symbols --
-    no re-parsing needed.
+    sense. The extraction module walks this same tree via queries to pull
+    out symbols/imports -- no re-parsing needed.
     """
-    tree = _parser_for(path).parse(source)
+    tree = parser_for(path).parse(source)
     return not tree.root_node.has_error

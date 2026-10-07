@@ -1,4 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from analysis_engine.extraction.models import Symbol
 
 
 @dataclass(frozen=True)
@@ -8,3 +10,4 @@ class FileSummary:
     line_count: int
     parse_ok: bool | None  # None when the file's language has no parser yet
     size_bytes: int
+    symbols: list[Symbol] = field(default_factory=list)
