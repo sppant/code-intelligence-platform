@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from tree_sitter import Language, Node, Query, QueryCursor
+from tree_sitter import Language, Node, Query
 
 from analysis_engine.extraction.models import CallSite, FileExtraction, Import, Symbol
 from analysis_engine.parsing.ts_js_parser import parser_for
@@ -74,7 +74,11 @@ def _is_top_level(node: Node) -> bool:
 
 
 def _matches(query: Query, root: Node) -> list[dict[str, list[Node]]]:
-    return [captures for _pattern_index, captures in QueryCursor(query).matches(root)]
+    # tree-sitter 0.23.x: Query.matches() directly (no separate QueryCursor
+    # -- that's a 0.26+ API this pinned version predates). Verified directly
+    # against the pinned package, not assumed: same (pattern_index, captures)
+    # tuple shape either way.
+    return [captures for _pattern_index, captures in query.matches(root)]
 
 
 def _symbols_from(query: Query, root: Node, kind: str) -> list[Symbol]:

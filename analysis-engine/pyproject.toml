@@ -3,9 +3,21 @@ name = "analysis-engine"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
-    "tree-sitter>=0.23",
-    "tree-sitter-javascript>=0.23",
-    "tree-sitter-typescript>=0.23",
+    # Pinned exactly, not a floor: tree-sitter-typescript's last release
+    # (0.23.2) declares tree-sitter~=0.23 as its core dependency, and
+    # tree-sitter core 0.23.2 explicitly tests against
+    # tree-sitter-javascript>=0.23.0 in its own test extras. An unconstrained
+    # `>=0.23` previously resolved to tree-sitter 0.26.0 +
+    # tree-sitter-javascript 0.25.0 -- both outside what either grammar
+    # package has ever been verified against -- which reproducibly
+    # segfaulted (not a catchable Python exception) deep inside tree-sitter's
+    # native query matching when analyzing a real-world repo (django/django)
+    # at sufficient file-count scale. This exact trio is the evidence-backed
+    # mutually-compatible combination; do not loosen without re-verifying
+    # against a large real repo, not just the test suite.
+    "tree-sitter==0.23.2",
+    "tree-sitter-javascript==0.23.1",
+    "tree-sitter-typescript==0.23.2",
 ]
 
 [dependency-groups]
