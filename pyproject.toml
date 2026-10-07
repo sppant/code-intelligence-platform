@@ -1,0 +1,5 @@
+[tool.uv.workspace]
+members = ["backend", "analysis-engine"]
+
+[tool.uv]
+dev-dependencies = []
