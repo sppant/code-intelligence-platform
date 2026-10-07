@@ -1,30 +1,42 @@
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from arq import create_pool
-from arq.connections import RedisSettings
-from fastapi import Depends, FastAPI, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from strawberry.fastapi import GraphQLRouter
 
 from backend.config import settings
-from backend.db import get_session
+from backend.db import async_session_factory, get_session
+from backend.jobs.claims import claim_outstanding_jobs
+from backend.jobs.tasks import execute_claimed_job
 from backend.schema.schema import schema
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    app.state.redis = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+    # Startup reconciliation: pick back up any job left pending/stale-running
+    # by a previous process (e.g. a Passenger worker recycle) rather than
+    # losing it. Tasks are held in a set so asyncio doesn't garbage-collect
+    # them mid-flight; add_done_callback discards each once it finishes.
+    app.state.background_tasks = set()
+    async with async_session_factory() as session:
+        stale_job_ids = await claim_outstanding_jobs(session)
+    for job_id in stale_job_ids:
+        task = asyncio.create_task(execute_claimed_job(str(job_id)))
+        app.state.background_tasks.add(task)
+        task.add_done_callback(app.state.background_tasks.discard)
+
     yield
-    await app.state.redis.close()
 
 
 async def get_context(
     request: Request,
+    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    return {"session": session, "redis": request.app.state.redis}
+    return {"session": session, "background_tasks": background_tasks}
 
 
 app = FastAPI(title="Code Intelligence Platform API", lifespan=lifespan)

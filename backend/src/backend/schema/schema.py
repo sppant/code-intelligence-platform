@@ -1,10 +1,12 @@
 import uuid
 
 import strawberry
+from fastapi import BackgroundTasks
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from analysis_engine.ingestion.clone import validate_github_url
+from backend.jobs.tasks import run_analysis_job
 from backend.models import AnalysisJob
 from backend.models import Repository as RepositoryModel
 from backend.schema.types import AnalysisJob as AnalysisJobType
@@ -55,12 +57,13 @@ class Mutation:
     @strawberry.mutation
     async def analyze_repository(self, info: strawberry.Info, repo_url: str) -> AnalysisJobType:
         """Validate the URL, upsert the repository, create a pending job, and
-        enqueue the arq task that does the actual clone/detect/parse work.
-        Kept intentionally thin: the GraphQL layer only orchestrates state,
-        the analysis-engine owns all repository-handling logic.
+        schedule the clone/detect/parse work as a background task in this
+        same process. Kept intentionally thin: the GraphQL layer only
+        orchestrates state, the analysis-engine owns all repository-handling
+        logic.
         """
         session: AsyncSession = info.context["session"]
-        redis = info.context["redis"]
+        background_tasks: BackgroundTasks = info.context["background_tasks"]
 
         ref = validate_github_url(repo_url)
         canonical_url = f"https://github.com/{ref.owner}/{ref.name}"
@@ -76,12 +79,10 @@ class Mutation:
         job = AnalysisJob(repository_id=repository.id, status="pending")
         session.add(job)
         await session.flush()
-
-        arq_job = await redis.enqueue_job("analyze_repository_task", str(job.id))
-        job.arq_job_id = arq_job.job_id if arq_job else None
-
         await session.commit()
         await session.refresh(job)
+
+        background_tasks.add_task(run_analysis_job, str(job.id))
 
         return _to_job_type(job)
 

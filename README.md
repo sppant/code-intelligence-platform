@@ -4,7 +4,13 @@ Analyzes public Git repositories and builds a structured, queryable representati
 
 > **Status:** Day 1 foundation complete — repo ingestion, language detection, and a shallow per-file parse pass, end to end through a GraphQL API and a React UI. Full AST symbol extraction, the dependency graph, impact analysis, and the AI layer are later milestones.
 
-## Architecture principle
+## Architecture
+
+```
+React / TypeScript / Vite  →  Python / FastAPI / GraphQL  →  PostgreSQL
+```
+
+No Docker, no Redis, no message broker. The target production environment is shared Plesk hosting, which doesn't support custom daemons or containers, so the architecture is deliberately plain: a Python web process and a Postgres database, nothing else required to run it. See "Background jobs" below for how analysis work still happens off the request path without a queue.
 
 The Python analysis engine (`analysis-engine/`) is the deterministic source of truth. It parses source with real ASTs (`tree-sitter` for TS/JS, the stdlib `ast` module for Python) and will build an explicit code graph from that — it can answer structural questions like "who calls this function" or "what depends on this module" entirely on its own, with no database and no LLM involved. The backend persists what the engine produces; an optional AI layer (future work) only explains results the engine already computed — it never originates structural facts.
 
@@ -12,30 +18,75 @@ The Python analysis engine (`analysis-engine/`) is the deterministic source of t
 Repository URL
       │
       ▼
-GraphQL mutation (backend) ──creates──▶ analysis_jobs row ──enqueues──▶ arq job
-                                                                           │
-                                                                           ▼
-                                                      analysis-engine (no DB access):
-                                                      clone → detect languages → parse
-                                                                           │
-                                                                           ▼
-                                                      worker persists Analysis + File rows
+GraphQL mutation (backend) ──creates──▶ analysis_jobs row (pending)
+                                                │
+                                                ▼
+                                   BackgroundTasks.add_task
+                                   (same process, after the response is sent)
+                                                │
+                                                ▼
+                              claim (atomic UPDATE, see jobs/claims.py)
+                                                │
+                         ┌──────────────────────┼───────────────────────┐
+                         │                      │                       │
+                 normal in-process      app startup reconciles   cron sweep script
+                 request path           any stuck pending/        (jobs/sweep.py) re-claims
+                                         stale-running job         anything still stuck
+                         │                      │                       │
+                         └──────────────────────┴───────────────────────┘
+                                                ▼
+                              analysis-engine (no DB access):
+                              clone → detect languages → parse
+                                                │
+                                                ▼
+                              persists Analysis + File rows, job → completed/failed
 ```
+
+### Background jobs without a queue
+
+Shared Plesk hosting runs Python apps under Passenger, which can recycle the web process between requests — so a plain in-memory background task isn't *guaranteed* to run to completion. Three things work together instead of a Redis/Celery-style queue:
+
+1. **In-process task** (`backend/src/backend/jobs/tasks.py::run_analysis_job`) — the `analyzeRepository` mutation schedules it via FastAPI's `BackgroundTasks`, so it runs in the same process right after the response is sent. This is the fast path for the overwhelming majority of requests.
+2. **Startup reconciliation** (`main.py`'s `lifespan`) — on every process start, re-claims any job still `pending` or stuck `running` past the staleness threshold, so a process recycle mid-job just delays it rather than losing it.
+3. **Cron sweep** (`backend/src/backend/jobs/sweep.py`) — a standalone script, meant to be invoked periodically by Plesk's Scheduled Tasks, that does the same reconciliation independently of the web process's lifecycle. Backstops the (unlikely but possible) case where no web request restarts the process for a while.
+
+All three funnel through one atomic claim (`backend/src/backend/jobs/claims.py`): `UPDATE analysis_jobs SET status='running', started_at=now() WHERE status='pending' OR (status='running' AND started_at < now() - staleness_threshold) RETURNING id`. Postgres row-level locking makes this safe against two of these three paths firing at the same moment — the loser's `WHERE` no longer matches the row the winner just updated.
+
+This also means Docker/a real queue can be introduced later without a rewrite: `run_analysis_job`/`execute_claimed_job` are plain async functions with no framework coupling — wrapping one in an arq/Celery task body later is a small, additive change, not a redesign.
 
 ## Local development
 
-Requires Docker. First time:
+Requires Node.js, a Python toolchain with [uv](https://docs.astral.sh/uv/), and a local PostgreSQL server — no Docker.
 
 ```bash
-cp .env.example .env
-docker compose -f infra/docker-compose.yml --env-file .env up --build
-docker compose -f infra/docker-compose.yml --env-file .env exec backend uv run alembic upgrade head
+# 1. Frontend dependencies
+cd frontend && pnpm install && cd ..
+
+# 2. Python dependencies (uv workspace covers backend + analysis-engine)
+uv sync
+
+# 3. Environment variables
+cp .env.example .env   # edit DATABASE_URL if your local Postgres differs
+
+# 4. Start Postgres and create the database (macOS/Homebrew shown; adjust for your OS)
+brew install postgresql@16   # if not already installed
+brew services start postgresql@16
+psql postgres -c "CREATE USER cip WITH PASSWORD 'cip_dev_password' CREATEDB;"
+createdb -O cip cip
+
+# 5. Run database migrations
+cd backend && uv run alembic upgrade head && cd ..
+
+# 6. Start the backend
+cd backend && uv run uvicorn backend.main:app --reload --port 8000 && cd ..
+
+# 7. Start the frontend (separate terminal)
+cd frontend && pnpm dev
 ```
 
 - Frontend: http://localhost:5173
 - Backend REST health check: http://localhost:8000/health
-- Backend GraphQL (with playground): http://localhost:8000/graphql
-- Postgres is exposed on the host at `localhost:5433` (not 5432) to avoid colliding with a locally-installed Postgres; containers talk to each other over the internal `postgres:5432` address regardless.
+- Backend GraphQL: http://localhost:8000/graphql
 
 Try it: paste `https://github.com/pypa/sampleproject` into the landing page and click "Analyze Repository" — or run the mutation directly:
 
@@ -44,32 +95,42 @@ curl -s -X POST http://localhost:8000/graphql -H "Content-Type: application/json
   -d '{"query":"mutation($url: String!) { analyzeRepository(repoUrl: $url) { id status } }","variables":{"url":"https://github.com/pypa/sampleproject"}}'
 ```
 
-Poll the job (or just check Postgres) until `status` is `completed`:
+Poll the job (or just check Postgres) until `status` is `completed` — no worker process to start, the backend alone will finish it:
 
 ```bash
-docker exec infra-postgres-1 psql -U cip -d cip -c "select status from analysis_jobs order by created_at desc limit 1;"
+psql -U cip -d cip -h localhost -c "select status from analysis_jobs order by created_at desc limit 1;"
 ```
+
+## Deploying to Plesk
+
+- **Frontend:** `pnpm build` in `frontend/`, serve the resulting `dist/` as static files (Plesk's docroot or its Node.js extension).
+- **Backend:** run under Plesk's Python application support (Passenger), app entry point `backend.main:app`. Install dependencies into the venv Plesk manages — Plesk's Python tooling expects pip-installable requirements, so export them from `uv` (`uv export --project backend --no-dev > requirements.txt`) rather than driving `uv` itself in that environment.
+- **Database:** Plesk's hosted PostgreSQL (or an external managed instance). Run `alembic upgrade head` once per deploy.
+- **Environment variables:** set via Plesk's "Environment Variables" panel for the app, matching `.env.example`.
+- **Background jobs:** register `jobs/sweep.py` as a Plesk Scheduled Task, e.g. every 5 minutes (comfortably under the 10-minute staleness default):
+  ```
+  */5 * * * * cd /var/www/vhosts/<domain>/backend && .venv/bin/python -m backend.jobs.sweep >> ../logs/sweep.log 2>&1
+  ```
 
 ## Monorepo layout
 
 - `frontend/` — React + TypeScript + Vite UI, GraphQL via `urql`.
-- `backend/` — FastAPI + Strawberry GraphQL API, SQLAlchemy/Alembic persistence, `arq` background worker. The **only** component that talks to Postgres.
+- `backend/` — FastAPI + Strawberry GraphQL API, SQLAlchemy/Alembic persistence, in-process background tasks (see above). The **only** component that talks to Postgres.
 - `analysis-engine/` — pure Python library with no database dependency: repository ingestion (validated clone, size/timeout guards), language detection, and per-file parsing. Usable standalone (CLI, tests) without the web app.
-- `infra/` — Docker Compose for local development.
 
 ## Testing
 
 ```bash
 uv run --project analysis-engine pytest analysis-engine/tests
-uv run --project backend pytest backend/tests
+uv run --project backend pytest backend/tests   # exercises the real local Postgres
 ```
 
-Fixture-free for now — tests exercise the clone/validation logic, language detection, and both parsers (`ast` for Python, `tree-sitter` for TS/JS) directly against in-memory/tmp-dir inputs. Repo-level fixtures and Playwright E2E tests land with the Day 3–4 milestones.
+Fixture-free for now — tests exercise the clone/validation logic, language detection, both parsers (`ast` for Python, `tree-sitter` for TS/JS), and the job-claiming logic (including a concurrency test that two simultaneous claims on one job resolve to exactly one winner) directly. Repo-level fixtures and Playwright E2E tests land with later milestones.
 
 ## Security model (Day 1 scope)
 
-Repositories are untrusted input. Today's guards: strict URL validation (must be `https://github.com/<owner>/<repo>`, reconstructed into a canonical clone URL rather than ever passed raw to a shell), `git clone` via an explicit argument list (no `shell=True`), a hard clone timeout, a post-clone size cap, and job-scoped scratch directories that are always cleaned up. Sandboxed execution, rate limiting, secret scanning, and a full threat model are deferred to a later hardening pass — see the build plan for the complete list.
+Repositories are untrusted input. Today's guards: strict URL validation (must be `https://github.com/<owner>/<repo>`, reconstructed into a canonical clone URL rather than ever passed raw to a shell), `git clone` via an explicit argument list (no `shell=True`), a hard clone timeout, a post-clone size cap, and job-scoped scratch directories that are always cleaned up. Sandboxed execution, rate limiting, secret scanning, and a full threat model are deferred to a later hardening pass.
 
 ## Environment variables
 
-See `.env.example`. `MAX_REPO_SIZE_MB` and `CLONE_TIMEOUT_SECONDS` bound the ingestion step; `VITE_GRAPHQL_URL` is read by the Vite dev server (must be set at container/process start, not just in a `.env` file inside `frontend/`).
+See `.env.example`. `MAX_REPO_SIZE_MB` and `CLONE_TIMEOUT_SECONDS` bound the ingestion step; `STALE_JOB_THRESHOLD_MINUTES` controls the background-job staleness window described above; `VITE_GRAPHQL_URL` is read by the Vite dev server.

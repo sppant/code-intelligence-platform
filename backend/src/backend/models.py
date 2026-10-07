@@ -27,7 +27,6 @@ class AnalysisJob(Base):
     repository_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("repositories.id"))
     status: Mapped[str] = mapped_column(default="pending")
     error_message: Mapped[str | None] = mapped_column(default=None)
-    arq_job_id: Mapped[str | None] = mapped_column(default=None)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(default=None)
     finished_at: Mapped[datetime | None] = mapped_column(default=None)

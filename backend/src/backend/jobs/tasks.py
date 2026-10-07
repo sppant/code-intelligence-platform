@@ -6,23 +6,33 @@ from analysis_engine.exceptions import AnalysisEngineError
 from analysis_engine.pipeline import run_pipeline
 from backend.config import settings
 from backend.db import async_session_factory
+from backend.jobs.claims import claim_job
 from backend.models import Analysis, AnalysisJob, File, Repository
 
 
-async def analyze_repository_task(ctx: dict, job_id: str) -> None:
-    """arq task: clone, detect languages, parse, and persist results for one
-    AnalysisJob. The analysis-engine pipeline itself has no DB dependency --
-    this task is the only place that touches Postgres.
+async def run_analysis_job(job_id: str) -> None:
+    """Entry point for a freshly-created job: claim it, then run it.
+
+    Called from the analyzeRepository mutation via FastAPI's BackgroundTasks
+    -- runs in the same process, after the response has been sent.
+    """
+    async with async_session_factory() as session:
+        claimed = await claim_job(session, uuid.UUID(job_id))
+    if not claimed:
+        return
+    await execute_claimed_job(job_id)
+
+
+async def execute_claimed_job(job_id: str) -> None:
+    """Clone, detect languages, parse, and persist results for a job that
+    has ALREADY been marked 'running' by the caller (claim_job or
+    claim_outstanding_jobs). The analysis-engine pipeline itself has no DB
+    dependency -- this is the only place that touches Postgres.
     """
     async with async_session_factory() as session:
         job = await session.get(AnalysisJob, uuid.UUID(job_id))
         if job is None:
             return
-
-        job.status = "running"
-        job.started_at = datetime.now(timezone.utc)
-        await session.commit()
-
         repository = await session.get(Repository, job.repository_id)
 
     try:
