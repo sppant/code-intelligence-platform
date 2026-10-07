@@ -3,7 +3,8 @@ from pathlib import Path
 
 from analysis_engine.detection.languages import detect_language, iter_source_files
 from analysis_engine.extraction import python_extractor, ts_js_extractor
-from analysis_engine.extraction.models import DependencyEdge, Import, Symbol
+from analysis_engine.extraction.call_resolution import resolve_calls
+from analysis_engine.extraction.models import CallEdge, CallSite, DependencyEdge, Import, Symbol
 from analysis_engine.extraction.resolution import resolve_relationships
 from analysis_engine.ingestion.clone import (
     RepositoryRef,
@@ -22,22 +23,25 @@ class AnalysisResult:
     languages: dict[str, int]
     files: list[FileSummary]
     dependency_edges: list[DependencyEdge]
+    call_edges: list[CallEdge]
     total_files: int
     total_lines: int
 
 
-def _parse_file(path: Path, language: str | None) -> tuple[bool | None, int, list[Symbol], list[Import]]:
-    """Return (parse_ok, line_count, symbols, imports) for one file.
+def _parse_file(
+    path: Path, language: str | None
+) -> tuple[bool | None, int, list[Symbol], list[Import], list[CallSite]]:
+    """Return (parse_ok, line_count, symbols, imports, calls) for one file.
 
     parse_ok is None when the file's language has no parser yet. Symbol/
-    import extraction only runs once parse_ok is True -- extracting from a
-    file tree-sitter/ast already flagged as broken would just produce
-    garbage entries.
+    import/call extraction only runs once parse_ok is True -- extracting
+    from a file tree-sitter/ast already flagged as broken would just
+    produce garbage entries.
     """
     try:
         raw = path.read_bytes()
     except OSError:
-        return None, 0, [], []
+        return None, 0, [], [], []
 
     line_count = raw.count(b"\n") + (1 if raw and not raw.endswith(b"\n") else 0)
 
@@ -45,27 +49,29 @@ def _parse_file(path: Path, language: str | None) -> tuple[bool | None, int, lis
         text = raw.decode("utf-8", errors="replace")
         ok = python_parser.parse_ok(text)
         if not ok:
-            return ok, line_count, [], []
+            return ok, line_count, [], [], []
         extraction = python_extractor.extract(text)
-        return ok, line_count, extraction.symbols, extraction.imports
+        return ok, line_count, extraction.symbols, extraction.imports, extraction.calls
 
     if language in ("javascript", "typescript"):
         ok = ts_js_parser.parse_ok(raw, path)
         if not ok:
-            return ok, line_count, [], []
+            return ok, line_count, [], [], []
         extraction = ts_js_extractor.extract(raw, path)
-        return ok, line_count, extraction.symbols, extraction.imports
+        return ok, line_count, extraction.symbols, extraction.imports, extraction.calls
 
-    return None, line_count, [], []
+    return None, line_count, [], [], []
 
 
 def run_pipeline(repo_url: str, max_size_mb: int, clone_timeout_seconds: int) -> AnalysisResult:
-    """Clone, detect languages, parse, and extract top-level symbols +
-    import/export edges into a module-level dependency graph.
+    """Clone, detect languages, parse, and extract top-level symbols, the
+    module-level import dependency graph, and the (same-file + import-
+    resolved) call graph.
 
-    This is the entire Day 2 engine surface: no call-graph resolution or
-    impact analysis yet (Day 3+). Pure function over the filesystem -- no
-    database access, so it stays usable from a CLI or test without a worker.
+    No method/attribute-call resolution and no impact analysis yet (those
+    live in analysis_engine.graph, computed over this result's edges by the
+    caller). Pure function over the filesystem -- no database access, so it
+    stays usable from a CLI or test without a worker.
     """
     ref = validate_github_url(repo_url)
 
@@ -75,10 +81,11 @@ def run_pipeline(repo_url: str, max_size_mb: int, clone_timeout_seconds: int) ->
 
         files: list[FileSummary] = []
         files_with_imports: list[tuple[str, str | None, list[Import]]] = []
+        files_with_calls: list[tuple[str, str | None, list[Symbol], list[Import], list[CallSite]]] = []
         total_lines = 0
         for path in iter_source_files(workspace):
             language = detect_language(path)
-            parse_ok_value, line_count, symbols, imports = _parse_file(path, language)
+            parse_ok_value, line_count, symbols, imports, calls = _parse_file(path, language)
             total_lines += line_count
             rel_path = str(path.relative_to(workspace))
             files.append(
@@ -92,6 +99,7 @@ def run_pipeline(repo_url: str, max_size_mb: int, clone_timeout_seconds: int) ->
                 )
             )
             files_with_imports.append((rel_path, language, imports))
+            files_with_calls.append((rel_path, language, symbols, imports, calls))
 
         language_counts: dict[str, int] = {}
         for f in files:
@@ -99,12 +107,14 @@ def run_pipeline(repo_url: str, max_size_mb: int, clone_timeout_seconds: int) ->
                 language_counts[f.language] = language_counts.get(f.language, 0) + 1
 
         dependency_edges = resolve_relationships(files_with_imports)
+        call_edges = resolve_calls(files_with_calls)
 
     return AnalysisResult(
         repository=ref,
         languages=language_counts,
         files=files,
         dependency_edges=dependency_edges,
+        call_edges=call_edges,
         total_files=len(files),
         total_lines=total_lines,
     )

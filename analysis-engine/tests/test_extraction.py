@@ -33,6 +33,57 @@ def test_python_extractor_absolute_and_relative_imports():
     assert result.imports[3].module == "" and result.imports[3].level == 2
 
 
+def test_python_extractor_import_bindings_for_call_resolution():
+    source = (
+        "import os\n"
+        "from foo.bar import baz\n"
+        "from foo.bar import qux as aliased\n"
+        "from foo.bar import *\n"
+    )
+    result = python_extractor.extract(source)
+
+    whole_module_import = result.imports[0]
+    assert whole_module_import.local_name is None and whole_module_import.imported_name is None
+
+    plain = next(i for i in result.imports if i.line == 2)
+    assert plain.local_name == "baz" and plain.imported_name == "baz"
+
+    aliased = next(i for i in result.imports if i.line == 3)
+    assert aliased.local_name == "aliased" and aliased.imported_name == "qux"
+
+    star = next(i for i in result.imports if i.line == 4)
+    assert star.is_star is True and star.local_name is None
+
+
+def test_python_extractor_multi_name_from_import_emits_one_row_per_name():
+    source = "from foo import a, b as c\n"
+    result = python_extractor.extract(source)
+    assert len(result.imports) == 2
+    assert {(i.local_name, i.imported_name) for i in result.imports} == {("a", "a"), ("c", "b")}
+
+
+def test_python_extractor_collects_call_sites_with_containing_symbol():
+    source = (
+        "helper_at_module_level()\n"
+        "def foo():\n"
+        "    bar()\n"
+        "class Baz:\n"
+        "    def method(self):\n"
+        "        qux()\n"
+    )
+    result = python_extractor.extract(source)
+    by_name = {c.callee_name: c.containing_symbol for c in result.calls}
+    assert by_name["helper_at_module_level"] is None
+    assert by_name["bar"] == "foo"
+    assert by_name["qux"] == "Baz"  # attributed to the enclosing top-level class, not the nested method
+
+
+def test_python_extractor_excludes_attribute_calls():
+    source = "obj.method()\n"
+    result = python_extractor.extract(source)
+    assert result.calls == []
+
+
 # --- TS/JS extractor ---
 
 
@@ -64,6 +115,48 @@ def test_ts_js_extractor_imports_and_export_from():
     result = ts_js_extractor.extract(source, Path("app.js"))
     modules = {imp.module for imp in result.imports}
     assert modules == {"./foo", "./bar", "some-package"}
+
+
+def test_ts_js_extractor_named_import_bindings_for_call_resolution():
+    source = b"import { foo } from './a';\nimport { bar as baz } from './b';\n"
+    result = ts_js_extractor.extract(source, Path("app.js"))
+    plain = next(i for i in result.imports if i.module == "./a")
+    assert plain.local_name == "foo" and plain.imported_name == "foo"
+    aliased = next(i for i in result.imports if i.module == "./b")
+    assert aliased.local_name == "baz" and aliased.imported_name == "bar"
+
+
+def test_ts_js_extractor_default_and_namespace_imports_are_unresolvable():
+    source = b"import def1 from './a';\nimport * as ns from './b';\n"
+    result = ts_js_extractor.extract(source, Path("app.js"))
+    assert all(i.local_name is None for i in result.imports)
+
+
+def test_ts_js_extractor_export_from_never_contributes_call_bindings():
+    source = b"export { x } from './bar';\n"
+    result = ts_js_extractor.extract(source, Path("app.js"))
+    assert result.imports[0].local_name is None
+
+
+def test_ts_js_extractor_collects_call_sites_with_containing_symbol():
+    source = (
+        b"helperAtModuleLevel();\n"
+        b"function foo() { bar(); }\n"
+        b"class Baz { method() { qux(); } }\n"
+        b"function outer() { function inner() { nested(); } }\n"
+    )
+    result = ts_js_extractor.extract(source, Path("app.js"))
+    by_name = {c.callee_name: c.containing_symbol for c in result.calls}
+    assert by_name["helperAtModuleLevel"] is None
+    assert by_name["bar"] == "foo"
+    assert by_name["qux"] == "Baz"
+    assert by_name["nested"] == "outer"
+
+
+def test_ts_js_extractor_excludes_attribute_calls():
+    source = b"obj.method();\n"
+    result = ts_js_extractor.extract(source, Path("app.js"))
+    assert result.calls == []
 
 
 # --- resolution ---

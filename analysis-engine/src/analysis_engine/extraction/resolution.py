@@ -59,6 +59,16 @@ def _resolve_ts_js_import(source_path: str, imp: Import, known_paths: set[str]) 
     return None
 
 
+def resolve_import_target(source_path: str, language: str | None, imp: Import, known_paths: set[str]) -> str | None:
+    """Public per-language dispatch, shared by resolve_relationships (below)
+    and the call-graph resolver (call_resolution.py), which both need to
+    turn one Import into a resolved repo path using the same logic.
+    """
+    if language == "python":
+        return _resolve_python_import(source_path, imp, known_paths)
+    return _resolve_ts_js_import(source_path, imp, known_paths)
+
+
 def resolve_relationships(
     files_with_imports: list[tuple[str, str | None, list[Import]]],
 ) -> list[DependencyEdge]:
@@ -75,10 +85,7 @@ def resolve_relationships(
 
     for source_path, language, imports in files_with_imports:
         for imp in imports:
-            if language == "python":
-                target = _resolve_python_import(source_path, imp, known_paths)
-            else:
-                target = _resolve_ts_js_import(source_path, imp, known_paths)
+            target = resolve_import_target(source_path, language, imp, known_paths)
 
             if target is not None:
                 edges.add(DependencyEdge(source_path, target, None, "imports"))

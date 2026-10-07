@@ -1,6 +1,6 @@
 import ast
 
-from analysis_engine.extraction.models import FileExtraction, Import, Symbol
+from analysis_engine.extraction.models import CallSite, FileExtraction, Import, Symbol
 
 
 class _TopLevelVisitor(ast.NodeVisitor):
@@ -37,19 +37,60 @@ class _TopLevelVisitor(ast.NodeVisitor):
             )
 
     def visit_Import(self, node: ast.Import) -> None:
+        # `import foo.bar [as baz]` -- the bound name is only ever used via
+        # attribute access (foo.bar.something()), which call resolution
+        # deliberately doesn't attempt (no attribute-call resolution), so
+        # local_name/imported_name are left unset here on purpose.
         for alias in node.names:
             self.imports.append(Import(module=alias.name, level=0, line=node.lineno))
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        self.imports.append(Import(module=node.module or "", level=node.level, line=node.lineno))
+        if len(node.names) == 1 and node.names[0].name == "*":
+            self.imports.append(Import(module=node.module or "", level=node.level, line=node.lineno, is_star=True))
+            return
+        for alias in node.names:
+            self.imports.append(
+                Import(
+                    module=node.module or "",
+                    level=node.level,
+                    line=node.lineno,
+                    local_name=alias.asname or alias.name,
+                    imported_name=alias.name,
+                )
+            )
+
+
+def _collect_calls(node: ast.AST, current_symbol: str | None, calls: list[CallSite]) -> None:
+    """Walk the full tree (unlike _TopLevelVisitor, which deliberately never
+    recurses) collecting every call to a plain name (ast.Attribute callees --
+    obj.method() -- are excluded; method/attribute-call resolution is out of
+    scope). `current_symbol` tracks the nearest *top-level* function/class a
+    call is nested inside: the `if current_symbol is None` guard means it's
+    set once, on the module -> top-level-def transition, and never
+    overwritten descending into nested defs/methods -- so a call inside a
+    method is correctly attributed to its enclosing top-level class/function,
+    not to the method itself (methods aren't extracted as symbols at all).
+    """
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.Call) and isinstance(child.func, ast.Name):
+            calls.append(CallSite(child.func.id, child.lineno, current_symbol))
+        child_symbol = current_symbol
+        if current_symbol is None and isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            child_symbol = child.name
+        _collect_calls(child, child_symbol, calls)
 
 
 def extract(source: str) -> FileExtraction:
-    """Extract top-level symbols and imports from already-valid Python
-    source (callers should only invoke this after confirming parse_ok).
+    """Extract top-level symbols, imports, and call sites from already-valid
+    Python source (callers should only invoke this after confirming
+    parse_ok).
     """
     tree = ast.parse(source)
     visitor = _TopLevelVisitor()
     for node in ast.iter_child_nodes(tree):
         visitor.visit(node)
-    return FileExtraction(symbols=visitor.symbols, imports=visitor.imports)
+
+    calls: list[CallSite] = []
+    _collect_calls(tree, None, calls)
+
+    return FileExtraction(symbols=visitor.symbols, imports=visitor.imports, calls=calls)
