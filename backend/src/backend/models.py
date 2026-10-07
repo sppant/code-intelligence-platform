@@ -100,3 +100,11 @@ class DependencyEdge(Base):
     target_file_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("files.id"), default=None)
     type: Mapped[str] = mapped_column(default="imports")
     external_module: Mapped[str | None] = mapped_column(default=None)
+
+    # type="calls" only (Day 3): the specific symbols involved, and the raw
+    # call-site text (may differ from target symbol's own name on an alias).
+    # Not reused from external_module, which means something different (an
+    # unresolved *import* specifier).
+    source_symbol_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("symbols.id"), default=None)
+    target_symbol_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("symbols.id"), default=None)
+    called_name: Mapped[str | None] = mapped_column(default=None)

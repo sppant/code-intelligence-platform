@@ -65,9 +65,10 @@ async def execute_claimed_job(job_id: str) -> None:
 
             # Explicit ids (rather than relying on the column's Python-side
             # default, which SQLAlchemy only evaluates at flush time) so
-            # dependency_edges below can resolve path -> file_id without a
-            # flush per file.
+            # dependency_edges/call_edges below can resolve path -> file_id
+            # and (path, name) -> symbol_id without a flush per row.
             path_to_file_id: dict[str, uuid.UUID] = {}
+            symbol_id_by_path_name: dict[tuple[str, str], uuid.UUID] = {}
             for file_summary in result.files:
                 file_id = uuid.uuid4()
                 path_to_file_id[file_summary.path] = file_id
@@ -83,8 +84,15 @@ async def execute_claimed_job(job_id: str) -> None:
                     )
                 )
                 for sym in file_summary.symbols:
+                    symbol_id = uuid.uuid4()
+                    # first-definition-wins on a duplicate top-level name in
+                    # one file (e.g. two functions named the same via
+                    # conditional branches) -- the call graph can only ever
+                    # point at one of them.
+                    symbol_id_by_path_name.setdefault((file_summary.path, sym.name), symbol_id)
                     session.add(
                         Symbol(
+                            id=symbol_id,
                             analysis_id=analysis.id,
                             file_id=file_id,
                             name=sym.name,
@@ -94,12 +102,11 @@ async def execute_claimed_job(job_id: str) -> None:
                         )
                     )
 
-            # Flush files/symbols before adding dependency_edges:
-            # relationships has two FK columns pointing at the same files
-            # table (source_file_id, target_file_id), which SQLAlchemy's
-            # automatic flush-order dependency sort does not reliably
-            # sequence after files on its own -- an explicit flush boundary
-            # guarantees it.
+            # Flush files/symbols before adding dependency_edges/call_edges:
+            # relationships has FK columns pointing at both files and
+            # symbols, which SQLAlchemy's automatic flush-order dependency
+            # sort does not reliably sequence after files/symbols on its
+            # own -- an explicit flush boundary guarantees it.
             await session.flush()
 
             for edge in result.dependency_edges:
@@ -110,6 +117,29 @@ async def execute_claimed_job(job_id: str) -> None:
                         target_file_id=path_to_file_id.get(edge.target_path) if edge.target_path else None,
                         type=edge.type,
                         external_module=edge.external_module,
+                    )
+                )
+
+            for call in result.call_edges:
+                source_symbol_id = (
+                    symbol_id_by_path_name.get((call.source_path, call.source_symbol))
+                    if call.source_symbol
+                    else None
+                )
+                target_symbol_id = (
+                    symbol_id_by_path_name.get((call.target_path, call.target_symbol))
+                    if call.target_path and call.target_symbol
+                    else None
+                )
+                session.add(
+                    DependencyEdge(
+                        analysis_id=analysis.id,
+                        source_file_id=path_to_file_id[call.source_path],
+                        target_file_id=path_to_file_id.get(call.target_path) if call.target_path else None,
+                        source_symbol_id=source_symbol_id,
+                        target_symbol_id=target_symbol_id,
+                        type=call.type,
+                        called_name=call.callee_name,
                     )
                 )
 

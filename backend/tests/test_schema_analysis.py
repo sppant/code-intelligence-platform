@@ -32,11 +32,24 @@ async def _make_analysis() -> dict:
         session.add_all([file_a, file_b])
         await session.flush()
 
-        session.add(
-            Symbol(analysis_id=analysis.id, file_id=file_a.id, name="do_thing", kind="function", line_start=1, line_end=2)
-        )
+        symbol_a = Symbol(analysis_id=analysis.id, file_id=file_a.id, name="do_thing", kind="function", line_start=1, line_end=2)
+        symbol_b = Symbol(analysis_id=analysis.id, file_id=file_b.id, name="do_other", kind="function", line_start=1, line_end=2)
+        session.add_all([symbol_a, symbol_b])
+        await session.flush()
+
         session.add(
             DependencyEdge(analysis_id=analysis.id, source_file_id=file_a.id, target_file_id=file_b.id, type="imports")
+        )
+        session.add(
+            DependencyEdge(
+                analysis_id=analysis.id,
+                source_file_id=file_a.id,
+                target_file_id=file_b.id,
+                source_symbol_id=symbol_a.id,
+                target_symbol_id=symbol_b.id,
+                type="calls",
+                called_name="do_other",
+            )
         )
         await session.commit()
 
@@ -44,13 +57,17 @@ async def _make_analysis() -> dict:
             "repo_id": repo.id,
             "job_id": job.id,
             "analysis_id": analysis.id,
+            "symbol_a_id": symbol_a.id,
+            "symbol_b_id": symbol_b.id,
         }
 
 
 async def _cleanup(ids: dict) -> None:
     async with async_session_factory() as session:
-        await session.execute(delete(Symbol).where(Symbol.analysis_id == ids["analysis_id"]))
+        # relationships rows can reference symbols (source/target_symbol_id)
+        # -- must be deleted before Symbol to satisfy the FK constraint.
         await session.execute(delete(DependencyEdge).where(DependencyEdge.analysis_id == ids["analysis_id"]))
+        await session.execute(delete(Symbol).where(Symbol.analysis_id == ids["analysis_id"]))
         await session.execute(delete(File).where(File.analysis_id == ids["analysis_id"]))
         await session.execute(delete(Analysis).where(Analysis.id == ids["analysis_id"]))
         await session.execute(delete(AnalysisJob).where(AnalysisJob.id == ids["job_id"]))
@@ -80,10 +97,31 @@ async def test_repository_latest_analysis_resolves_nested_shape():
         analysis = result.data["repository"]["latestAnalysis"]
         assert analysis["statistics"] == {
             "totalFiles": 2,
-            "totalSymbols": 1,
-            "totalDependencyEdges": 1,
+            "totalSymbols": 2,
+            "totalDependencyEdges": 1,  # the "calls" edge must NOT be counted here
         }
         assert analysis["dependencyEdges"] == [{"sourcePath": "a.py", "targetPath": "b.py"}]
+    finally:
+        await _cleanup(ids)
+
+
+async def test_symbol_callers_and_calls_resolve_only_calls_type_edges():
+    ids = await _make_analysis()
+    try:
+        async with async_session_factory() as session:
+            result = await schema.execute(
+                """
+                query($aid: UUID!) {
+                  searchSymbols(analysisId: $aid, query: "do_other") { calls { filePath symbolName } callers { filePath symbolName } }
+                }
+                """,
+                variable_values={"aid": str(ids["analysis_id"])},
+                context_value={"session": session, "background_tasks": None},
+            )
+        assert result.errors is None
+        [do_other] = result.data["searchSymbols"]
+        assert do_other["calls"] == []
+        assert do_other["callers"] == [{"filePath": "a.py", "symbolName": "do_thing"}]
     finally:
         await _cleanup(ids)
 
