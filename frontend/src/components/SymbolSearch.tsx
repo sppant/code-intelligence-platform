@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { client } from "../graphql/client";
 import { SEARCH_SYMBOLS_QUERY, type SymbolResult } from "../graphql/operations";
 
-export function SymbolSearch({ analysisId }: { analysisId: string }) {
+export function SymbolSearch({ analysisId, repositoryId }: { analysisId: string; repositoryId: string }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SymbolResult[]>([]);
 
@@ -35,7 +36,8 @@ export function SymbolSearch({ analysisId }: { analysisId: string }) {
         <ul>
           {results.map((symbol) => (
             <li key={symbol.id}>
-              <code>{symbol.name}</code> ({symbol.kind}) — {symbol.filePath}:{symbol.lineStart}
+              <code>{symbol.name}</code> ({symbol.kind}) — {symbol.filePath}:{symbol.lineStart}{" "}
+              <Link to={`/repository/${repositoryId}/impact/${symbol.id}`}>View impact</Link>
             </li>
           ))}
         </ul>

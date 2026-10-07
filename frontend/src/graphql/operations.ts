@@ -103,6 +103,50 @@ export const SEARCH_SYMBOLS_QUERY = `
   }
 `;
 
+export const ARCHITECTURE_INSIGHTS_QUERY = `
+  query ArchitectureInsights($id: UUID!) {
+    repository(id: $id) {
+      name
+      latestAnalysis {
+        architectureInsights {
+          cycles
+          fanInOut {
+            path
+            fanIn
+            fanOut
+          }
+          largeFiles
+          isolatedFiles
+        }
+      }
+    }
+  }
+`;
+
+export const IMPACT_ANALYSIS_QUERY = `
+  query ImpactAnalysis($symbolId: UUID!) {
+    impactAnalysis(symbolId: $symbolId) {
+      symbol {
+        name
+        kind
+        filePath
+      }
+      directCallers {
+        filePath
+        symbolName
+      }
+      affectedFiles
+      affectedSymbols {
+        name
+        kind
+        filePath
+      }
+      affectedTests
+      riskIndicators
+    }
+  }
+`;
+
 export interface AnalysisJob {
   id: string;
   status: string;
@@ -151,4 +195,35 @@ export interface Repository {
     createdAt: string;
     statistics: RepositoryStatistics;
   } | null;
+}
+
+export interface FileFanInOut {
+  path: string;
+  fanIn: number;
+  fanOut: number;
+}
+
+export interface ArchitectureInsights {
+  cycles: string[][];
+  fanInOut: FileFanInOut[];
+  largeFiles: string[];
+  isolatedFiles: string[];
+}
+
+export interface CallReference {
+  filePath: string;
+  symbolName: string | null;
+}
+
+export interface ImpactAnalysis {
+  symbol: {
+    name: string;
+    kind: string;
+    filePath: string;
+  };
+  directCallers: CallReference[];
+  affectedFiles: string[];
+  affectedSymbols: { name: string; kind: string; filePath: string }[];
+  affectedTests: string[];
+  riskIndicators: string[];
 }

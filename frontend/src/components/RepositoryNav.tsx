@@ -17,6 +17,9 @@ export function RepositoryNav({ repositoryId }: { repositoryId: string }) {
       <NavLink to={`${base}/graph`} style={linkStyle}>
         Architecture Graph
       </NavLink>
+      <NavLink to={`${base}/insights`} style={linkStyle}>
+        Insights
+      </NavLink>
     </nav>
   );
 }

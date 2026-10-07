@@ -45,7 +45,7 @@ export function CodeExplorerPage() {
 
       {analysis && (
         <>
-          <SymbolSearch analysisId={analysis.id} />
+          <SymbolSearch analysisId={analysis.id} repositoryId={id} />
 
           <div style={{ display: "flex", gap: "2rem", marginTop: "1.5rem" }}>
             <div style={{ flex: "0 0 280px", maxHeight: "70vh", overflowY: "auto" }}>
@@ -62,7 +62,7 @@ export function CodeExplorerPage() {
                   <p>
                     {selectedFile.language ?? "unknown"} · {selectedFile.lineCount} lines
                   </p>
-                  <SymbolList symbols={selectedFile.symbols} />
+                  <SymbolList symbols={selectedFile.symbols} repositoryId={id} />
                 </>
               ) : (
                 <p>Select a file to view its symbols.</p>
