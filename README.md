@@ -2,7 +2,7 @@
 
 Analyzes public Git repositories and builds a structured, queryable representation of their codebase — architecture, dependencies, symbols, and change impact.
 
-> **Status:** Day 2 complete — repo ingestion, language detection, AST/tree-sitter symbol extraction, and a module-level dependency graph, persisted and queryable through GraphQL, with a Repository Overview, Code Explorer, symbol search, and an interactive architecture graph in the React UI. No Docker/Redis anywhere in the stack (see "Background jobs without a queue" below) -- it runs on plain Node + Python + PostgreSQL, matching the target shared-hosting deployment. Call-graph resolution, circular-dependency detection, impact analysis, and the AI layer are later milestones.
+> **Status:** Day 3 complete — repo ingestion, language detection, AST/tree-sitter symbol extraction, a module-level dependency graph, a (same-file + import-resolved) call graph, circular-dependency detection, architecture insights (fan-in/out, large/isolated files), and change-impact analysis, all persisted and queryable through GraphQL, with a Repository Overview, Code Explorer, interactive Architecture Graph, Architecture Insights, and Impact Analysis in the React UI — plus live-feeling job progress via polling. No Docker/Redis anywhere in the stack (see "Background jobs without a queue" below) -- it runs on plain Node + Python + PostgreSQL, matching the target shared-hosting deployment. Incremental analysis, performance benchmarks, and the AI layer are later milestones.
 
 ## Architecture
 
@@ -127,9 +127,11 @@ uv run --project backend pytest backend/tests   # exercises the real local Postg
 
 Fixture-free for now — tests exercise the clone/validation logic, language detection, both parsers (`ast` for Python, `tree-sitter` for TS/JS), symbol/import extraction and path resolution (Python absolute/relative imports, TS/JS relative specifiers with index-file fallback, external/unresolved imports), the job-claiming logic (including a concurrency test that two simultaneous claims on one job resolve to exactly one winner), and the GraphQL resolvers (nested analysis shape, symbol search) directly against a real local Postgres. Repo-level fixtures and Playwright E2E tests land with later milestones.
 
-## Known limitations (Day 2 scope)
+## Known limitations
 
-Import resolution is repo-root-relative only: a Python `src/` layout (import paths resolved via an installed package, not the physical directory tree) or a TypeScript path alias (`tsconfig.json` `paths`, workspace packages) won't resolve to an in-repo file even when the dependency is real -- it's recorded as an external/unresolved edge instead. Symbol extraction is top-level only (no nested functions/methods, no call-graph). All of this is a deliberate Day 2 scope boundary, not an oversight -- see `analysis_engine/extraction/resolution.py`.
+Import resolution is repo-root-relative only: a Python `src/` layout (import paths resolved via an installed package, not the physical directory tree) or a TypeScript path alias (`tsconfig.json` `paths`, workspace packages) won't resolve to an in-repo file even when the dependency is real -- it's recorded as an external/unresolved edge instead. Symbol extraction is top-level only (no nested functions/methods as their own symbols). See `analysis_engine/extraction/resolution.py`.
+
+The call graph only resolves plain-name calls (`foo()`) to a same-file or import-resolved top-level function/class -- method/attribute calls (`obj.method()`) are never resolved (no type inference), and neither are Python star imports (`from x import *`) or TypeScript default/namespace imports, since none of those can be statically bound to a specific name without guessing. "Architectural boundary violations" from the original spec's wishlist isn't attempted -- it needs a concept of user-defined architectural layers this project doesn't have. All of this is deliberate scope, not an oversight -- see `analysis_engine/extraction/call_resolution.py` and `analysis_engine/graph/insights.py`.
 
 ## Security model
 

@@ -20,6 +20,7 @@ export const ANALYSIS_JOB_STATUS_QUERY = `
       id
       status
       errorMessage
+      progress
       repositoryId
     }
   }
@@ -151,6 +152,7 @@ export interface AnalysisJob {
   id: string;
   status: string;
   errorMessage?: string | null;
+  progress?: string | null;
   repositoryId: string;
 }
 

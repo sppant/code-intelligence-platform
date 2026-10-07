@@ -16,6 +16,17 @@ const EXAMPLE_REPOSITORIES = [
 
 const POLL_INTERVAL_MS = 2000;
 
+// Mirrors the stage names backend/src/backend/jobs/tasks.py's on_progress
+// callback writes (see analysis_engine.pipeline.run_pipeline's docstring
+// for the authoritative stage list).
+const STAGES: { key: string; label: string }[] = [
+  { key: "cloning", label: "Cloning repository" },
+  { key: "parsing_and_extracting", label: "Parsing source & extracting symbols" },
+  { key: "resolving_imports", label: "Resolving dependency graph" },
+  { key: "building_call_graph", label: "Building call graph" },
+  { key: "persisting", label: "Saving results" },
+];
+
 export function LandingPage() {
   const navigate = useNavigate();
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -92,11 +103,30 @@ export function LandingPage() {
 
       {error && <p role="alert">Error: {error}</p>}
 
-      {job && (
+      {job && isPolling && <ProgressChecklist currentStage={job.progress ?? null} />}
+
+      {job && !isPolling && !error && (
         <p>
-          Analysis job <code>{job.id}</code> created with status <strong>{job.status}</strong>.
+          Analysis job <code>{job.id}</code> status: <strong>{job.status}</strong>.
         </p>
       )}
     </main>
+  );
+}
+
+function ProgressChecklist({ currentStage }: { currentStage: string | null }) {
+  const currentIndex = STAGES.findIndex((s) => s.key === currentStage);
+
+  return (
+    <ul style={{ listStyle: "none", padding: 0, textAlign: "left", maxWidth: 320, margin: "1.5rem auto" }}>
+      {STAGES.map((stage, index) => {
+        const symbol = currentIndex < 0 ? "○" : index < currentIndex ? "✓" : index === currentIndex ? "●" : "○";
+        return (
+          <li key={stage.key} style={{ opacity: currentIndex >= 0 && index > currentIndex ? 0.5 : 1 }}>
+            {symbol} {stage.label}
+          </li>
+        );
+      })}
+    </ul>
   );
 }

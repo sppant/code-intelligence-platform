@@ -36,6 +36,7 @@ def _to_job_type(job: AnalysisJob) -> AnalysisJobType:
         repository_id=job.repository_id,
         status=job.status,
         error_message=job.error_message,
+        progress=job.progress,
         created_at=job.created_at,
     )
 

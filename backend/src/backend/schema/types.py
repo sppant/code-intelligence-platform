@@ -39,6 +39,7 @@ class AnalysisJob:
     repository_id: uuid.UUID
     status: str
     error_message: str | None
+    progress: str | None
     created_at: datetime
 
     @strawberry.field

@@ -35,12 +35,21 @@ async def execute_claimed_job(job_id: str) -> None:
             return
         repository = await session.get(Repository, job.repository_id)
 
+    # run_pipeline executes in a worker thread (asyncio.to_thread); its
+    # on_progress callback can't directly await an async DB write, so it
+    # schedules one onto this coroutine's event loop instead.
+    loop = asyncio.get_running_loop()
+
+    def on_progress(stage: str) -> None:
+        asyncio.run_coroutine_threadsafe(_update_progress(job_id, stage), loop)
+
     try:
         result = await asyncio.to_thread(
             run_pipeline,
             repository.url,
             settings.max_repo_size_mb,
             settings.clone_timeout_seconds,
+            on_progress,
         )
     except AnalysisEngineError as exc:
         await _mark_failed(job_id, str(exc))
@@ -52,6 +61,10 @@ async def execute_claimed_job(job_id: str) -> None:
     try:
         async with async_session_factory() as session:
             job = await session.get(AnalysisJob, uuid.UUID(job_id))
+
+            # Already running on the event loop here (unlike the pipeline's
+            # on_progress stages above) -- set directly, no thread hop needed.
+            job.progress = "persisting"
 
             analysis = Analysis(
                 analysis_job_id=job.id,
@@ -148,6 +161,23 @@ async def execute_claimed_job(job_id: str) -> None:
             await session.commit()
     except Exception as exc:  # persistence bug shouldn't leave a job stuck "running" forever
         await _mark_failed(job_id, f"Failed to persist analysis results: {exc}")
+
+
+async def _update_progress(job_id: str, stage: str) -> None:
+    """Best-effort/informational: never let a write failure (or a lost
+    update, if two progress writes race under pathological speed) affect
+    the job itself -- status/error_message remain the authoritative
+    completion signal, progress is purely a nicer polling experience.
+    """
+    try:
+        async with async_session_factory() as session:
+            job = await session.get(AnalysisJob, uuid.UUID(job_id))
+            if job is None:
+                return
+            job.progress = stage
+            await session.commit()
+    except Exception:
+        pass
 
 
 async def _mark_failed(job_id: str, error_message: str) -> None:

@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -63,21 +64,47 @@ def _parse_file(
     return None, line_count, [], [], []
 
 
-def run_pipeline(repo_url: str, max_size_mb: int, clone_timeout_seconds: int) -> AnalysisResult:
+def run_pipeline(
+    repo_url: str,
+    max_size_mb: int,
+    clone_timeout_seconds: int,
+    on_progress: Callable[[str], None] | None = None,
+) -> AnalysisResult:
     """Clone, detect languages, parse, and extract top-level symbols, the
     module-level import dependency graph, and the (same-file + import-
     resolved) call graph.
 
+    `on_progress`, if given, is called synchronously with a short stage name
+    at each major step: "cloning", "parsing_and_extracting" (language
+    detection + parsing + symbol/import/call extraction, all interleaved in
+    the per-file loop below -- deliberately one stage, not several, since
+    splitting a single interleaved loop into separately-fired stages would
+    misrepresent actual progress), "resolving_imports", and
+    "building_call_graph". Purely informational -- this function stays
+    otherwise unchanged and still has no database access, so it remains
+    usable from a CLI or test without a worker. "persisting" is never fired
+    here; the engine has no DB access by design, so the caller
+    (jobs/tasks.py) sets that stage itself once this function returns.
+
     No method/attribute-call resolution and no impact analysis yet (those
     live in analysis_engine.graph, computed over this result's edges by the
-    caller). Pure function over the filesystem -- no database access, so it
-    stays usable from a CLI or test without a worker.
+    caller).
     """
     ref = validate_github_url(repo_url)
+
+    if on_progress:
+        on_progress("cloning")
 
     with scratch_workspace() as workspace:
         clone_repository(ref, workspace, timeout_seconds=clone_timeout_seconds)
         enforce_size_cap(workspace, max_size_mb=max_size_mb)
+
+        if on_progress:
+            # Language detection happens per-file inside the loop below,
+            # not as a separate pass -- firing a distinct "detecting
+            # languages" stage here would be a phantom stage with zero real
+            # work before the very next one, so it's folded into this one.
+            on_progress("parsing_and_extracting")
 
         files: list[FileSummary] = []
         files_with_imports: list[tuple[str, str | None, list[Import]]] = []
@@ -106,7 +133,12 @@ def run_pipeline(repo_url: str, max_size_mb: int, clone_timeout_seconds: int) ->
             if f.language:
                 language_counts[f.language] = language_counts.get(f.language, 0) + 1
 
+        if on_progress:
+            on_progress("resolving_imports")
         dependency_edges = resolve_relationships(files_with_imports)
+
+        if on_progress:
+            on_progress("building_call_graph")
         call_edges = resolve_calls(files_with_calls)
 
     return AnalysisResult(
