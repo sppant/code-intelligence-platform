@@ -49,6 +49,8 @@ class Analysis(Base):
 
     analysis_job: Mapped["AnalysisJob"] = relationship(back_populates="analysis")
     files: Mapped[list["File"]] = relationship(back_populates="analysis")
+    symbols: Mapped[list["Symbol"]] = relationship(viewonly=True)
+    dependency_edges: Mapped[list["DependencyEdge"]] = relationship(viewonly=True)
 
 
 class File(Base):
@@ -63,3 +65,38 @@ class File(Base):
     size_bytes: Mapped[int | None] = mapped_column(default=None)
 
     analysis: Mapped["Analysis"] = relationship(back_populates="files")
+    symbols: Mapped[list["Symbol"]] = relationship(back_populates="file")
+
+
+class Symbol(Base):
+    __tablename__ = "symbols"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    analysis_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("analyses.id"))
+    file_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("files.id"))
+    name: Mapped[str]
+    kind: Mapped[str]
+    line_start: Mapped[int]
+    line_end: Mapped[int]
+
+    file: Mapped["File"] = relationship(back_populates="symbols")
+
+
+class DependencyEdge(Base):
+    """A module-level dependency edge (currently always type="imports";
+    target_file_id is nullable specifically so a later "calls" edge type and
+    circular-dependency detection can add more rows here without a schema
+    change). Table name stays "relationships" to match the conceptual model
+    in the spec, but the class is named DependencyEdge -- not Relationship
+    -- to avoid colliding in spirit with SQLAlchemy's own relationship()
+    used throughout this module for ORM back-refs.
+    """
+
+    __tablename__ = "relationships"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    analysis_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("analyses.id"))
+    source_file_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("files.id"))
+    target_file_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("files.id"), default=None)
+    type: Mapped[str] = mapped_column(default="imports")
+    external_module: Mapped[str | None] = mapped_column(default=None)

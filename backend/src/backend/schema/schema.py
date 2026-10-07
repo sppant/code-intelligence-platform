@@ -7,10 +7,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from analysis_engine.ingestion.clone import validate_github_url
 from backend.jobs.tasks import run_analysis_job
+from backend.models import Analysis as AnalysisModel
 from backend.models import AnalysisJob
+from backend.models import File as FileModel
 from backend.models import Repository as RepositoryModel
+from backend.models import Symbol as SymbolModel
+from backend.schema.types import Analysis as AnalysisType
 from backend.schema.types import AnalysisJob as AnalysisJobType
 from backend.schema.types import Repository as RepositoryType
+from backend.schema.types import Symbol as SymbolType
+from backend.schema.types import build_analysis_type
 
 
 def _to_repository_type(repo: RepositoryModel) -> RepositoryType:
@@ -50,6 +56,34 @@ class Query:
         session: AsyncSession = info.context["session"]
         job = await session.get(AnalysisJob, id)
         return _to_job_type(job) if job else None
+
+    @strawberry.field
+    async def analysis(self, info: strawberry.Info, id: uuid.UUID) -> AnalysisType | None:
+        session: AsyncSession = info.context["session"]
+        row = await session.get(AnalysisModel, id)
+        return await build_analysis_type(session, row) if row else None
+
+    @strawberry.field
+    async def search_symbols(
+        self,
+        info: strawberry.Info,
+        analysis_id: uuid.UUID,
+        query: str,
+        kind: str | None = None,
+    ) -> list[SymbolType]:
+        session: AsyncSession = info.context["session"]
+        stmt = (
+            select(SymbolModel, FileModel.path)
+            .join(FileModel, FileModel.id == SymbolModel.file_id)
+            .where(SymbolModel.analysis_id == analysis_id, SymbolModel.name.ilike(f"%{query}%"))
+        )
+        if kind is not None:
+            stmt = stmt.where(SymbolModel.kind == kind)
+        rows = await session.execute(stmt)
+        return [
+            SymbolType(id=s.id, name=s.name, kind=s.kind, line_start=s.line_start, line_end=s.line_end, file_path=path)
+            for s, path in rows.all()
+        ]
 
 
 @strawberry.type
