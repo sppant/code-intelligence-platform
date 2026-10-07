@@ -14,9 +14,10 @@ from backend.models import Repository as RepositoryModel
 from backend.models import Symbol as SymbolModel
 from backend.schema.types import Analysis as AnalysisType
 from backend.schema.types import AnalysisJob as AnalysisJobType
+from backend.schema.types import ImpactAnalysis as ImpactAnalysisType
 from backend.schema.types import Repository as RepositoryType
 from backend.schema.types import Symbol as SymbolType
-from backend.schema.types import build_analysis_type
+from backend.schema.types import build_analysis_type, build_impact_analysis
 
 
 def _to_repository_type(repo: RepositoryModel) -> RepositoryType:
@@ -84,6 +85,12 @@ class Query:
             SymbolType(id=s.id, name=s.name, kind=s.kind, line_start=s.line_start, line_end=s.line_end, file_path=path)
             for s, path in rows.all()
         ]
+
+    @strawberry.field
+    async def impact_analysis(self, info: strawberry.Info, symbol_id: uuid.UUID) -> ImpactAnalysisType | None:
+        session: AsyncSession = info.context["session"]
+        symbol_row = await session.get(SymbolModel, symbol_id)
+        return await build_impact_analysis(session, symbol_row) if symbol_row else None
 
 
 @strawberry.type

@@ -5,6 +5,8 @@ import strawberry
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from analysis_engine.graph.impact import affected_files, compute_risk_indicators, is_test_file
+from analysis_engine.graph.insights import compute_architecture_insights
 from backend.models import Analysis as AnalysisModel
 from backend.models import DependencyEdge as DependencyEdgeModel
 from backend.models import File as FileModel
@@ -132,6 +134,21 @@ class FileNode:
 
 
 @strawberry.type
+class FileFanInOut:
+    path: str
+    fan_in: int
+    fan_out: int
+
+
+@strawberry.type
+class ArchitectureInsights:
+    cycles: list[list[str]]
+    fan_in_out: list[FileFanInOut]
+    large_files: list[str]
+    isolated_files: list[str]
+
+
+@strawberry.type
 class Analysis:
     id: uuid.UUID
     commit_sha: str | None
@@ -139,6 +156,7 @@ class Analysis:
     statistics: RepositoryStatistics
     files: list[FileNode]
     dependency_edges: list[DependencyEdge]
+    architecture_insights: ArchitectureInsights
 
 
 async def build_analysis_type(session: AsyncSession, analysis_row: AnalysisModel) -> Analysis:
@@ -200,6 +218,23 @@ async def build_analysis_type(session: AsyncSession, analysis_row: AnalysisModel
         total_dependency_edges=len(import_edge_rows),
     )
 
+    # Computed eagerly (not as a lazy @strawberry.field like latest_analysis)
+    # since file_rows/import_edge_rows are already loaded here -- costs no
+    # extra round trip, unlike latest_analysis which is genuinely optional.
+    file_tuples = [(f.path, f.line_count) for f in file_rows]
+    import_edge_tuples = [
+        (path_by_file_id[e.source_file_id], path_by_file_id[e.target_file_id])
+        for e in import_edge_rows
+        if e.target_file_id is not None
+    ]
+    raw_insights = compute_architecture_insights(file_tuples, import_edge_tuples)
+    architecture_insights = ArchitectureInsights(
+        cycles=raw_insights.cycles,
+        fan_in_out=[FileFanInOut(path=f.path, fan_in=f.fan_in, fan_out=f.fan_out) for f in raw_insights.fan_in_out],
+        large_files=raw_insights.large_files,
+        isolated_files=raw_insights.isolated_files,
+    )
+
     return Analysis(
         id=analysis_row.id,
         commit_sha=analysis_row.commit_sha,
@@ -207,4 +242,102 @@ async def build_analysis_type(session: AsyncSession, analysis_row: AnalysisModel
         statistics=statistics,
         files=files,
         dependency_edges=dependency_edges,
+        architecture_insights=architecture_insights,
+    )
+
+
+@strawberry.type
+class ImpactAnalysis:
+    symbol: Symbol
+    direct_callers: list[CallReference]
+    affected_files: list[str]
+    affected_symbols: list[Symbol]
+    affected_tests: list[str]
+    risk_indicators: list[str]
+
+
+async def build_impact_analysis(session: AsyncSession, symbol_row: SymbolModel) -> ImpactAnalysis:
+    """Given one Symbol row, compute direct callers (reverse "calls" edges),
+    affected files (transitive dependents via the file-level "imports"
+    graph), affected symbols (a bounded union of callers' symbols and
+    symbols defined in affected files -- NOT an unbounded transitive
+    closure), affected tests (affected files filtered through the stated
+    is_test_file heuristic), and risk indicators.
+    """
+    analysis_id = symbol_row.analysis_id
+
+    file_rows = (await session.scalars(select(FileModel).where(FileModel.analysis_id == analysis_id))).all()
+    path_by_file_id = {f.id: f.path for f in file_rows}
+    file_id_by_path = {f.path: f.id for f in file_rows}
+
+    symbol_rows = (await session.scalars(select(SymbolModel).where(SymbolModel.analysis_id == analysis_id))).all()
+    symbol_by_id = {s.id: s for s in symbol_rows}
+    symbols_by_file_id: dict[uuid.UUID, list[SymbolModel]] = {}
+    for s in symbol_rows:
+        symbols_by_file_id.setdefault(s.file_id, []).append(s)
+
+    edge_rows = (
+        await session.scalars(select(DependencyEdgeModel).where(DependencyEdgeModel.analysis_id == analysis_id))
+    ).all()
+
+    symbol_file_path = path_by_file_id[symbol_row.file_id]
+
+    import_edges = [
+        (path_by_file_id[e.source_file_id], path_by_file_id[e.target_file_id])
+        for e in edge_rows
+        if e.type == "imports" and e.target_file_id is not None
+    ]
+    affected_file_paths = affected_files(symbol_file_path, import_edges)
+
+    caller_edges = [e for e in edge_rows if e.type == "calls" and e.target_symbol_id == symbol_row.id]
+    direct_callers = [
+        CallReference(
+            file_path=path_by_file_id[e.source_file_id],
+            symbol_name=symbol_by_id[e.source_symbol_id].name if e.source_symbol_id else None,
+        )
+        for e in caller_edges
+    ]
+
+    caller_symbols = [symbol_by_id[e.source_symbol_id] for e in caller_edges if e.source_symbol_id]
+    affected_file_symbols = [
+        s for path in affected_file_paths for s in symbols_by_file_id.get(file_id_by_path.get(path), [])
+    ]
+    affected_symbols_by_id = {s.id: s for s in caller_symbols + affected_file_symbols}  # dedup, bounded
+    affected_symbols = [
+        Symbol(
+            id=s.id,
+            name=s.name,
+            kind=s.kind,
+            line_start=s.line_start,
+            line_end=s.line_end,
+            file_path=path_by_file_id[s.file_id],
+        )
+        for s in affected_symbols_by_id.values()
+    ]
+
+    affected_tests = sorted(p for p in affected_file_paths if is_test_file(p))
+
+    fan_in = sum(1 for _source, target in import_edges if target == symbol_file_path)
+    risk_indicators = compute_risk_indicators(
+        fan_in=fan_in,
+        affected_files_count=len(affected_file_paths),
+        affected_tests_count=len(affected_tests),
+        direct_callers_count=len(direct_callers),
+        symbol_kind=symbol_row.kind,
+    )
+
+    return ImpactAnalysis(
+        symbol=Symbol(
+            id=symbol_row.id,
+            name=symbol_row.name,
+            kind=symbol_row.kind,
+            line_start=symbol_row.line_start,
+            line_end=symbol_row.line_end,
+            file_path=symbol_file_path,
+        ),
+        direct_callers=direct_callers,
+        affected_files=sorted(affected_file_paths),
+        affected_symbols=affected_symbols,
+        affected_tests=affected_tests,
+        risk_indicators=risk_indicators,
     )

@@ -143,3 +143,79 @@ async def test_search_symbols_filters_by_name_and_kind():
         assert result.data["searchSymbols"] == [{"name": "do_thing", "filePath": "a.py"}]
     finally:
         await _cleanup(ids)
+
+
+async def test_architecture_insights_fan_in_out():
+    ids = await _make_analysis()
+    try:
+        async with async_session_factory() as session:
+            result = await schema.execute(
+                """
+                query($aid: UUID!) {
+                  analysis(id: $aid) {
+                    architectureInsights { cycles fanInOut { path fanIn fanOut } largeFiles isolatedFiles }
+                  }
+                }
+                """,
+                variable_values={"aid": str(ids["analysis_id"])},
+                context_value={"session": session, "background_tasks": None},
+            )
+        assert result.errors is None
+        insights = result.data["analysis"]["architectureInsights"]
+        assert insights["cycles"] == []
+        assert insights["largeFiles"] == []
+        assert insights["isolatedFiles"] == []  # both files are connected via the imports edge
+        fan_by_path = {f["path"]: (f["fanIn"], f["fanOut"]) for f in insights["fanInOut"]}
+        assert fan_by_path == {"a.py": (0, 1), "b.py": (1, 0)}
+    finally:
+        await _cleanup(ids)
+
+
+async def test_impact_analysis_for_called_symbol():
+    ids = await _make_analysis()
+    try:
+        async with async_session_factory() as session:
+            result = await schema.execute(
+                """
+                query($id: UUID!) {
+                  impactAnalysis(symbolId: $id) {
+                    symbol { name }
+                    directCallers { filePath symbolName }
+                    affectedFiles
+                    affectedSymbols { name }
+                    affectedTests
+                    riskIndicators
+                  }
+                }
+                """,
+                variable_values={"id": str(ids["symbol_b_id"])},  # do_other, called by do_thing in a.py
+                context_value={"session": session, "background_tasks": None},
+            )
+        assert result.errors is None
+        impact = result.data["impactAnalysis"]
+        assert impact["symbol"]["name"] == "do_other"
+        assert impact["directCallers"] == [{"filePath": "a.py", "symbolName": "do_thing"}]
+        assert impact["affectedFiles"] == ["a.py"]  # a.py imports b.py, so it's affected by a change to do_other
+        assert {s["name"] for s in impact["affectedSymbols"]} == {"do_thing"}
+        assert impact["affectedTests"] == []
+        assert "Missing test coverage" in impact["riskIndicators"]
+    finally:
+        await _cleanup(ids)
+
+
+async def test_impact_analysis_flags_no_direct_callers():
+    ids = await _make_analysis()
+    try:
+        async with async_session_factory() as session:
+            result = await schema.execute(
+                """
+                query($id: UUID!) { impactAnalysis(symbolId: $id) { riskIndicators } }
+                """,
+                variable_values={"id": str(ids["symbol_a_id"])},  # do_thing has no callers in this fixture
+                context_value={"session": session, "background_tasks": None},
+            )
+        assert result.errors is None
+        indicators = result.data["impactAnalysis"]["riskIndicators"]
+        assert any("No direct callers" in i for i in indicators)
+    finally:
+        await _cleanup(ids)
