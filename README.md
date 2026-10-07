@@ -2,7 +2,7 @@
 
 Analyzes public Git repositories and builds a structured, queryable representation of their codebase — architecture, dependencies, symbols, and change impact.
 
-> **Status:** Day 1 foundation complete — repo ingestion, language detection, and a shallow per-file parse pass, end to end through a GraphQL API and a React UI. Full AST symbol extraction, the dependency graph, impact analysis, and the AI layer are later milestones.
+> **Status:** Day 2 complete — repo ingestion, language detection, AST/tree-sitter symbol extraction, and a module-level dependency graph, persisted and queryable through GraphQL, with a Repository Overview, Code Explorer, symbol search, and an interactive architecture graph in the React UI. No Docker/Redis anywhere in the stack (see "Background jobs without a queue" below) -- it runs on plain Node + Python + PostgreSQL, matching the target shared-hosting deployment. Call-graph resolution, circular-dependency detection, impact analysis, and the AI layer are later milestones.
 
 ## Architecture
 
@@ -12,7 +12,7 @@ React / TypeScript / Vite  →  Python / FastAPI / GraphQL  →  PostgreSQL
 
 No Docker, no Redis, no message broker. The target production environment is shared Plesk hosting, which doesn't support custom daemons or containers, so the architecture is deliberately plain: a Python web process and a Postgres database, nothing else required to run it. See "Background jobs" below for how analysis work still happens off the request path without a queue.
 
-The Python analysis engine (`analysis-engine/`) is the deterministic source of truth. It parses source with real ASTs (`tree-sitter` for TS/JS, the stdlib `ast` module for Python) and will build an explicit code graph from that — it can answer structural questions like "who calls this function" or "what depends on this module" entirely on its own, with no database and no LLM involved. The backend persists what the engine produces; an optional AI layer (future work) only explains results the engine already computed — it never originates structural facts.
+The Python analysis engine (`analysis-engine/`) is the deterministic source of truth. It parses source with real ASTs (`tree-sitter` for TS/JS, the stdlib `ast` module for Python), extracts top-level symbols (functions/classes/variables/interfaces/type-aliases) and import/export edges, and resolves those edges into a module-level dependency graph — it can answer structural questions like "what does this module depend on" entirely on its own, with no database and no LLM involved. (Call-graph resolution -- "who calls this function" -- is Day 3.) The backend persists what the engine produces; an optional AI layer (future work) only explains results the engine already computed — it never originates structural facts.
 
 ```
 Repository URL
@@ -36,10 +36,10 @@ GraphQL mutation (backend) ──creates──▶ analysis_jobs row (pending)
                          └──────────────────────┴───────────────────────┘
                                                 ▼
                               analysis-engine (no DB access):
-                              clone → detect languages → parse
+                              clone → detect languages → parse → extract symbols/imports → resolve graph
                                                 │
                                                 ▼
-                              persists Analysis + File rows, job → completed/failed
+                    persists Analysis + File + Symbol + DependencyEdge rows, job → completed/failed
 ```
 
 ### Background jobs without a queue
@@ -88,7 +88,7 @@ cd frontend && pnpm dev
 - Backend REST health check: http://localhost:8000/health
 - Backend GraphQL: http://localhost:8000/graphql
 
-Try it: paste `https://github.com/pypa/sampleproject` into the landing page and click "Analyze Repository" — or run the mutation directly:
+Try it: paste `https://github.com/pypa/sampleproject` into the landing page and click "Analyze Repository" — the page polls job status and automatically navigates to the Repository Overview once analysis completes, from which the Code Explorer (file tree + per-file symbols + search) and Architecture Graph (interactive, click-to-highlight) tabs are reachable. Or run the mutation directly:
 
 ```bash
 curl -s -X POST http://localhost:8000/graphql -H "Content-Type: application/json" \
@@ -116,7 +116,7 @@ psql -U cip -d cip -h localhost -c "select status from analysis_jobs order by cr
 
 - `frontend/` — React + TypeScript + Vite UI, GraphQL via `urql`.
 - `backend/` — FastAPI + Strawberry GraphQL API, SQLAlchemy/Alembic persistence, in-process background tasks (see above). The **only** component that talks to Postgres.
-- `analysis-engine/` — pure Python library with no database dependency: repository ingestion (validated clone, size/timeout guards), language detection, and per-file parsing. Usable standalone (CLI, tests) without the web app.
+- `analysis-engine/` — pure Python library with no database dependency: repository ingestion (validated clone, size/timeout guards), language detection, per-file parsing, and symbol/import extraction resolved into a module-level dependency graph. Usable standalone (CLI, tests) without the web app.
 
 ## Testing
 
@@ -125,9 +125,13 @@ uv run --project analysis-engine pytest analysis-engine/tests
 uv run --project backend pytest backend/tests   # exercises the real local Postgres
 ```
 
-Fixture-free for now — tests exercise the clone/validation logic, language detection, both parsers (`ast` for Python, `tree-sitter` for TS/JS), and the job-claiming logic (including a concurrency test that two simultaneous claims on one job resolve to exactly one winner) directly. Repo-level fixtures and Playwright E2E tests land with later milestones.
+Fixture-free for now — tests exercise the clone/validation logic, language detection, both parsers (`ast` for Python, `tree-sitter` for TS/JS), symbol/import extraction and path resolution (Python absolute/relative imports, TS/JS relative specifiers with index-file fallback, external/unresolved imports), the job-claiming logic (including a concurrency test that two simultaneous claims on one job resolve to exactly one winner), and the GraphQL resolvers (nested analysis shape, symbol search) directly against a real local Postgres. Repo-level fixtures and Playwright E2E tests land with later milestones.
 
-## Security model (Day 1 scope)
+## Known limitations (Day 2 scope)
+
+Import resolution is repo-root-relative only: a Python `src/` layout (import paths resolved via an installed package, not the physical directory tree) or a TypeScript path alias (`tsconfig.json` `paths`, workspace packages) won't resolve to an in-repo file even when the dependency is real -- it's recorded as an external/unresolved edge instead. Symbol extraction is top-level only (no nested functions/methods, no call-graph). All of this is a deliberate Day 2 scope boundary, not an oversight -- see `analysis_engine/extraction/resolution.py`.
+
+## Security model
 
 Repositories are untrusted input. Today's guards: strict URL validation (must be `https://github.com/<owner>/<repo>`, reconstructed into a canonical clone URL rather than ever passed raw to a shell), `git clone` via an explicit argument list (no `shell=True`), a hard clone timeout, a post-clone size cap, and job-scoped scratch directories that are always cleaned up. Sandboxed execution, rate limiting, secret scanning, and a full threat model are deferred to a later hardening pass.
 
