@@ -10,8 +10,9 @@ from backend.models import Analysis, AnalysisJob, File, Repository
 
 
 async def analyze_repository_task(ctx: dict, job_id: str) -> None:
-    """arq task: clone, detect languages, and persist results for one
-    AnalysisJob. Per-file parsing is added in the next commit.
+    """arq task: clone, detect languages, parse, and persist results for one
+    AnalysisJob. The analysis-engine pipeline itself has no DB dependency --
+    this task is the only place that touches Postgres.
     """
     async with async_session_factory() as session:
         job = await session.get(AnalysisJob, uuid.UUID(job_id))
@@ -46,6 +47,7 @@ async def analyze_repository_task(ctx: dict, job_id: str) -> None:
             repository_id=job.repository_id,
             languages=result.languages,
             total_files=result.total_files,
+            total_lines=result.total_lines,
         )
         session.add(analysis)
         await session.flush()
@@ -56,6 +58,9 @@ async def analyze_repository_task(ctx: dict, job_id: str) -> None:
                     analysis_id=analysis.id,
                     path=file_summary.path,
                     language=file_summary.language,
+                    line_count=file_summary.line_count,
+                    parse_ok=file_summary.parse_ok,
+                    size_bytes=file_summary.size_bytes,
                 )
             )
 
