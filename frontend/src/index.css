@@ -1,111 +1,200 @@
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/syne/wght.css";
+
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+  /* WebXDevelop brand tokens — sampled from webxdevelop.com computed styles.
+     Dark-first brand; no light theme exists upstream, so this product stays
+     dark-only rather than inventing a light variant that isn't brand-true. */
+  --wx-bg-base: #121d28;
+  --wx-bg-sunken: #0e1620;
+  --wx-bg-raised: #16222f;
+  --wx-bg-card: #1a2836;
+  --wx-bg-card-hover: #20303f;
+  --wx-border-subtle: rgba(255, 255, 255, 0.08);
+  --wx-border-strong: rgba(255, 255, 255, 0.16);
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
+  --wx-text-primary: #eef3f7;
+  --wx-text-secondary: #9db0c0;
+  --wx-text-tertiary: #6c8092;
 
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
+  --wx-teal: #3dbc9c;
+  --wx-teal-bright: #57d9b8;
+  --wx-teal-bg: rgba(61, 188, 156, 0.1);
+  --wx-orange: #f79332;
+  --wx-orange-bg: rgba(247, 147, 50, 0.1);
+  --wx-red: #e5484d;
+  --wx-red-bg: rgba(229, 72, 77, 0.1);
+
+  --wx-font-display: "Syne Variable", Syne, "Trebuchet MS", system-ui, sans-serif;
+  --wx-font-sans: "Inter Variable", Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --wx-font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+
+  --wx-radius-sm: 10px;
+  --wx-radius-md: 14px;
+  --wx-radius-lg: 22px;
+  --wx-radius-pill: 999px;
+
+  color-scheme: dark;
+  font: 16px/1.5 var(--wx-font-sans);
+  color: var(--wx-text-primary);
+  background: var(--wx-bg-base);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
-
-  #social .button-icon {
-    filter: invert(1) brightness(2);
-  }
-}
-
-#root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
+* {
   box-sizing: border-box;
 }
 
 body {
   margin: 0;
+  min-height: 100svh;
+  background: var(--wx-bg-base);
+}
+
+#root {
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
 }
 
 h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
+h2,
+h3 {
+  font-family: var(--wx-font-display);
+  font-weight: 700;
+  color: var(--wx-text-primary);
+  margin: 0 0 0.5rem;
+  letter-spacing: -0.02em;
 }
 
 h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
-}
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
-}
-p {
-  margin: 0;
+  font-size: 2.5rem;
+  line-height: 1.1;
 }
 
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
+h2 {
+  font-size: 1.4rem;
+  line-height: 1.2;
+  margin-top: 2rem;
+}
+
+h3 {
+  font-size: 1.1rem;
+  margin-top: 1.5rem;
+}
+
+p {
+  margin: 0 0 0.75rem;
+  color: var(--wx-text-secondary);
+}
+
+a {
+  color: var(--wx-teal-bright);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
 }
 
 code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+  font-family: var(--wx-font-mono);
+  font-size: 0.9em;
+  color: var(--wx-text-primary);
+  background: var(--wx-bg-sunken);
+  border: 1px solid var(--wx-border-subtle);
+  border-radius: 6px;
+  padding: 0.1em 0.4em;
+}
+
+ul {
+  padding-left: 1.2rem;
+}
+
+li {
+  color: var(--wx-text-secondary);
+  margin-bottom: 0.3rem;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th {
+  text-align: left;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--wx-text-tertiary);
+  font-weight: 600;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--wx-border-subtle);
+}
+
+td {
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--wx-border-subtle);
+  color: var(--wx-text-secondary);
+}
+
+tbody tr:hover {
+  background: var(--wx-bg-card-hover);
+}
+
+input[type="text"],
+input[type="search"] {
+  font: inherit;
+  color: var(--wx-text-primary);
+  background: var(--wx-bg-raised);
+  border: 1px solid var(--wx-border-subtle);
+  border-radius: var(--wx-radius-pill);
+  padding: 0.7rem 1.1rem;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+input[type="text"]:focus,
+input[type="search"]:focus {
+  border-color: var(--wx-teal);
+}
+
+input::placeholder {
+  color: var(--wx-text-tertiary);
+}
+
+button {
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: var(--wx-radius-pill);
+  border: 1px solid transparent;
+  padding: 0.7rem 1.4rem;
+  background: var(--wx-teal);
+  color: #06130f;
+  transition: background 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+
+button:hover:not(:disabled) {
+  background: var(--wx-teal-bright);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Fractal-noise grain, matching the texture layered over webxdevelop.com's
+   hero — a flat SVG turbulence filter rendered once as a data URI so no
+   extra asset request is needed. */
+.wx-grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.35;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E");
 }

@@ -1,6 +1,7 @@
 import { Provider } from "urql";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { client } from "./graphql/client";
+import { AppShell } from "./components/AppShell";
 import { LandingPage } from "./pages/LandingPage";
 import { RepositoryOverviewPage } from "./pages/RepositoryOverviewPage";
 import { CodeExplorerPage } from "./pages/CodeExplorerPage";
@@ -14,12 +15,14 @@ function App() {
     <Provider value={client}>
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/repository/:id" element={<RepositoryOverviewPage />} />
-          <Route path="/repository/:id/explorer" element={<CodeExplorerPage />} />
-          <Route path="/repository/:id/graph" element={<ArchitectureGraphPage />} />
-          <Route path="/repository/:id/insights" element={<ArchitectureInsightsPage />} />
-          <Route path="/repository/:id/impact/:symbolId" element={<ImpactAnalysisPage />} />
+          <Route element={<AppShell />}>
+            <Route path="/" element={<LandingPage />} />
+            <Route path="/repository/:id" element={<RepositoryOverviewPage />} />
+            <Route path="/repository/:id/explorer" element={<CodeExplorerPage />} />
+            <Route path="/repository/:id/graph" element={<ArchitectureGraphPage />} />
+            <Route path="/repository/:id/insights" element={<ArchitectureInsightsPage />} />
+            <Route path="/repository/:id/impact/:symbolId" element={<ImpactAnalysisPage />} />
+          </Route>
         </Routes>
       </BrowserRouter>
     </Provider>

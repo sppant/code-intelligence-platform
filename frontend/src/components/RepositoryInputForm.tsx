@@ -16,7 +16,7 @@ export function RepositoryInputForm({ onSubmit, isSubmitting }: RepositoryInputF
   }
 
   return (
-    <form onSubmit={handleSubmit}>
+    <form onSubmit={handleSubmit} className="wx-input-row">
       <input
         type="text"
         value={repoUrl}

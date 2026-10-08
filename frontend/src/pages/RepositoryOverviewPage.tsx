@@ -22,29 +22,30 @@ export function RepositoryOverviewPage() {
   }, [id]);
 
   if (!id) return null;
-  if (loading) return <p>Loading...</p>;
-  if (!repository) return <p>Repository not found.</p>;
+  if (loading) return <p className="wx-page">Loading...</p>;
+  if (!repository) return <p className="wx-page">Repository not found.</p>;
 
   const stats = repository.latestAnalysis?.statistics;
 
   return (
-    <main style={{ maxWidth: 900, margin: "2rem auto", padding: "0 1.5rem" }}>
-      <h1>
-        {repository.owner}/{repository.name}
-      </h1>
-      <p>
-        <a href={repository.url} target="_blank" rel="noreferrer">
+    <main className="wx-page">
+      <div className="wx-page__header">
+        <p className="wx-eyebrow">Repository Overview</p>
+        <h1>
+          {repository.owner}/{repository.name}
+        </h1>
+        <a href={repository.url} target="_blank" rel="noreferrer" className="wx-page__url">
           {repository.url}
         </a>
-      </p>
+      </div>
 
       <RepositoryNav repositoryId={id} />
 
-      {!stats && <p>No completed analysis yet.</p>}
+      {!stats && <p className="wx-empty">No completed analysis yet.</p>}
 
       {stats && (
         <>
-          <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap", margin: "1.5rem 0" }}>
+          <div className="wx-stat-grid">
             <StatCard label="Files" value={stats.totalFiles} />
             <StatCard label="Lines of code" value={stats.totalLines} />
             <StatCard label="Symbols" value={stats.totalSymbols} />
@@ -52,7 +53,7 @@ export function RepositoryOverviewPage() {
           </div>
 
           {repository.latestAnalysis?.isIncremental && (
-            <p style={{ color: "#555", fontStyle: "italic", margin: "0 0 1.5rem" }}>
+            <p className="wx-note">
               Incremental analysis: {repository.latestAnalysis.filesReused}/
               {(repository.latestAnalysis.filesReused ?? 0) + (repository.latestAnalysis.filesReprocessed ?? 0)}{" "}
               files reused (unchanged since the last analysis).
@@ -60,10 +61,10 @@ export function RepositoryOverviewPage() {
           )}
 
           <h2>Languages</h2>
-          <ul>
+          <ul className="wx-tag-row">
             {Object.entries(stats.languages).map(([language, count]) => (
-              <li key={language}>
-                {language}: {count} file{count === 1 ? "" : "s"}
+              <li key={language} className="wx-tag">
+                <strong>{language}</strong> · {count} file{count === 1 ? "" : "s"}
               </li>
             ))}
           </ul>
@@ -75,9 +76,9 @@ export function RepositoryOverviewPage() {
 
 function StatCard({ label, value }: { label: string; value: number }) {
   return (
-    <div style={{ border: "1px solid #ddd", borderRadius: 6, padding: "0.75rem 1.25rem", minWidth: 120 }}>
-      <div style={{ fontSize: "1.5rem", fontWeight: 700 }}>{value}</div>
-      <div style={{ color: "#666" }}>{label}</div>
+    <div className="wx-stat-card">
+      <div className="wx-stat-card__value">{value}</div>
+      <div className="wx-stat-card__label">{label}</div>
     </div>
   );
 }

@@ -31,16 +31,19 @@ export function ArchitectureGraphPage() {
   }, [id]);
 
   if (!id) return null;
-  if (loading) return <p>Loading...</p>;
+  if (loading) return <p className="wx-page">Loading...</p>;
 
   const analysis = repository?.latestAnalysis;
 
   return (
-    <main style={{ maxWidth: 1200, margin: "2rem auto", padding: "0 1.5rem" }}>
-      <h1>{repository?.name}</h1>
+    <main className="wx-page wx-page--wide">
+      <div className="wx-page__header">
+        <p className="wx-eyebrow">Architecture Graph</p>
+        <h1>{repository?.name}</h1>
+      </div>
       <RepositoryNav repositoryId={id} />
 
-      {!analysis && <p>No completed analysis yet.</p>}
+      {!analysis && <p className="wx-empty">No completed analysis yet.</p>}
       {analysis && (
         <>
           <p>Click a node to highlight its direct dependencies and dependents.</p>

@@ -3,23 +3,25 @@ import type { SymbolResult } from "../graphql/operations";
 
 export function SymbolList({ symbols, repositoryId }: { symbols: SymbolResult[]; repositoryId: string }) {
   if (symbols.length === 0) {
-    return <p>No symbols in this file.</p>;
+    return <p className="wx-empty">No symbols in this file.</p>;
   }
 
   return (
     <table>
       <thead>
         <tr>
-          <th style={{ textAlign: "left" }}>Name</th>
-          <th style={{ textAlign: "left" }}>Kind</th>
-          <th style={{ textAlign: "left" }}>Lines</th>
+          <th>Name</th>
+          <th>Kind</th>
+          <th>Lines</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
         {symbols.map((symbol) => (
           <tr key={symbol.id}>
-            <td>{symbol.name}</td>
+            <td>
+              <code>{symbol.name}</code>
+            </td>
             <td>{symbol.kind}</td>
             <td>
               {symbol.lineStart}–{symbol.lineEnd}

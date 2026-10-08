@@ -43,28 +43,20 @@ function TreeNodeView({
   });
 
   return (
-    <ul style={{ listStyle: "none", margin: 0, paddingLeft: depth === 0 ? 0 : "1rem" }}>
+    <ul className="wx-tree">
       {sortedChildren.map((child) => (
         <li key={child.path}>
           {child.isFile ? (
             <button
               type="button"
               onClick={() => onSelect(child.path)}
-              style={{
-                display: "block",
-                width: "100%",
-                textAlign: "left",
-                background: child.path === selectedPath ? "#eef" : "transparent",
-                border: "none",
-                padding: "0.15rem 0.3rem",
-                cursor: "pointer",
-              }}
+              className={`wx-tree__file${child.path === selectedPath ? " wx-tree__file--selected" : ""}`}
             >
               {child.name}
             </button>
           ) : (
             <>
-              <div style={{ padding: "0.15rem 0.3rem", fontWeight: 600 }}>{child.name}/</div>
+              <div className="wx-tree__dir">{child.name}/</div>
               <TreeNodeView node={child} selectedPath={selectedPath} onSelect={onSelect} depth={depth + 1} />
             </>
           )}

@@ -24,20 +24,28 @@ export function SymbolSearch({ analysisId, repositoryId }: { analysisId: string;
   }, [analysisId, query]);
 
   return (
-    <div>
+    <div className="wx-search">
       <input
-        type="text"
+        type="search"
         value={query}
         onChange={(event) => setQuery(event.target.value)}
         placeholder="Search symbols..."
         aria-label="Search symbols"
       />
       {results.length > 0 && (
-        <ul>
+        <ul className="wx-search__results">
           {results.map((symbol) => (
-            <li key={symbol.id}>
-              <code>{symbol.name}</code> ({symbol.kind}) — {symbol.filePath}:{symbol.lineStart}{" "}
-              <Link to={`/repository/${repositoryId}/impact/${symbol.id}`}>View impact</Link>
+            <li key={symbol.id} className="wx-search__result">
+              <div className="wx-search__result-row">
+                <code>{symbol.name}</code>
+                <span className="wx-search__result-meta">{symbol.kind}</span>
+              </div>
+              <div className="wx-search__result-row wx-search__result-meta">
+                <span className="wx-search__result-path">
+                  {symbol.filePath}:{symbol.lineStart}
+                </span>
+                <Link to={`/repository/${repositoryId}/impact/${symbol.id}`}>View impact</Link>
+              </div>
             </li>
           ))}
         </ul>

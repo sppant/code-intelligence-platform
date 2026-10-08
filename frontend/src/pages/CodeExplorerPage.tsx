@@ -31,41 +31,46 @@ export function CodeExplorerPage() {
   }, [id]);
 
   if (!id) return null;
-  if (loading) return <p>Loading...</p>;
+  if (loading) return <p className="wx-page">Loading...</p>;
 
   const analysis = repository?.latestAnalysis;
   const selectedFile = analysis?.files.find((f) => f.path === selectedPath) ?? null;
 
   return (
-    <main style={{ maxWidth: 1100, margin: "2rem auto", padding: "0 1.5rem" }}>
-      <h1>{repository?.name}</h1>
+    <main className="wx-page wx-page--wide">
+      <div className="wx-page__header">
+        <p className="wx-eyebrow">Code Explorer</p>
+        <h1>{repository?.name}</h1>
+      </div>
       <RepositoryNav repositoryId={id} />
 
-      {!analysis && <p>No completed analysis yet.</p>}
+      {!analysis && <p className="wx-empty">No completed analysis yet.</p>}
 
       {analysis && (
         <>
           <SymbolSearch analysisId={analysis.id} repositoryId={id} />
 
-          <div style={{ display: "flex", gap: "2rem", marginTop: "1.5rem" }}>
-            <div style={{ flex: "0 0 280px", maxHeight: "70vh", overflowY: "auto" }}>
+          <div style={{ display: "flex", gap: "1.5rem", marginTop: "1.5rem" }}>
+            <div className="wx-card" style={{ flex: "0 0 280px", maxHeight: "70vh", overflowY: "auto" }}>
               <FileTree
                 paths={analysis.files.map((f) => f.path)}
                 selectedPath={selectedPath}
                 onSelect={setSelectedPath}
               />
             </div>
-            <div style={{ flex: 1 }}>
+            <div className="wx-card" style={{ flex: 1, minWidth: 0 }}>
               {selectedFile ? (
                 <>
-                  <h2>{selectedFile.path}</h2>
+                  <h2 style={{ marginTop: 0, fontFamily: "var(--wx-font-mono)", fontSize: "1.05rem" }}>
+                    {selectedFile.path}
+                  </h2>
                   <p>
                     {selectedFile.language ?? "unknown"} · {selectedFile.lineCount} lines
                   </p>
                   <SymbolList symbols={selectedFile.symbols} repositoryId={id} />
                 </>
               ) : (
-                <p>Select a file to view its symbols.</p>
+                <p className="wx-empty">Select a file to view its symbols.</p>
               )}
             </div>
           </div>

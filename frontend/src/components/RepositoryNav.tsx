@@ -2,22 +2,21 @@ import { NavLink } from "react-router-dom";
 
 export function RepositoryNav({ repositoryId }: { repositoryId: string }) {
   const base = `/repository/${repositoryId}`;
-  const linkStyle = ({ isActive }: { isActive: boolean }) => ({
-    fontWeight: isActive ? 700 : 400,
-  });
+  const linkClass = ({ isActive }: { isActive: boolean }) =>
+    isActive ? "wx-nav-tabs__active" : undefined;
 
   return (
-    <nav style={{ display: "flex", gap: "1rem", margin: "1rem 0", borderBottom: "1px solid #ddd", paddingBottom: "0.5rem" }}>
-      <NavLink to={base} end style={linkStyle}>
+    <nav className="wx-nav-tabs">
+      <NavLink to={base} end className={linkClass}>
         Overview
       </NavLink>
-      <NavLink to={`${base}/explorer`} style={linkStyle}>
+      <NavLink to={`${base}/explorer`} className={linkClass}>
         Code Explorer
       </NavLink>
-      <NavLink to={`${base}/graph`} style={linkStyle}>
+      <NavLink to={`${base}/graph`} className={linkClass}>
         Architecture Graph
       </NavLink>
-      <NavLink to={`${base}/insights`} style={linkStyle}>
+      <NavLink to={`${base}/insights`} className={linkClass}>
         Insights
       </NavLink>
     </nav>

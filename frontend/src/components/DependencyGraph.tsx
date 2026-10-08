@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Background, Controls, ReactFlow, type Edge, type Node } from "@xyflow/react";
+import { Background, BackgroundVariant, Controls, ReactFlow, type Edge, type Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import type { DependencyEdge } from "../graphql/operations";
 
@@ -56,8 +56,8 @@ export function DependencyGraph({
     id: file.path,
     position: positions[file.path] ?? { x: 0, y: 0 },
     data: { label: file.path.split("/").pop() },
+    className: !connectedPaths || connectedPaths.has(file.path) ? undefined : "wx-graph-node--dim",
     style: {
-      opacity: !connectedPaths || connectedPaths.has(file.path) ? 1 : 0.25,
       fontSize: 11,
       width: 180,
     },
@@ -78,14 +78,16 @@ export function DependencyGraph({
   }));
 
   return (
-    <div style={{ height: "70vh", border: "1px solid #ddd" }}>
+    <div className="wx-graph-card">
+      <div className="wx-hero__bg" aria-hidden="true" />
+      <div className="wx-grain" aria-hidden="true" />
       <ReactFlow
         nodes={nodes}
         edges={flowEdges}
         onNodeClick={(_event, node) => setSelectedPath(node.id === selectedPath ? null : node.id)}
         fitView
       >
-        <Background />
+        <Background variant={BackgroundVariant.Dots} color="rgba(157, 176, 192, 0.25)" gap={18} size={1} />
         <Controls />
       </ReactFlow>
     </div>

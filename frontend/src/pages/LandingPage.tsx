@@ -81,36 +81,51 @@ export function LandingPage() {
   }
 
   return (
-    <main>
-      <h1>Code Intelligence</h1>
-      <p>Understand any codebase.</p>
-
-      <RepositoryInputForm onSubmit={handleAnalyze} isSubmitting={isSubmitting || isPolling} />
-
-      <p>
-        Try an example:{" "}
-        {EXAMPLE_REPOSITORIES.map((url) => (
-          <button
-            key={url}
-            type="button"
-            onClick={() => handleAnalyze(url)}
-            disabled={isSubmitting || isPolling}
-          >
-            {url.replace("https://github.com/", "")}
-          </button>
-        ))}
-      </p>
-
-      {error && <p role="alert">Error: {error}</p>}
-
-      {job && isPolling && <ProgressChecklist currentStage={job.progress ?? null} />}
-
-      {job && !isPolling && !error && (
-        <p>
-          Analysis job <code>{job.id}</code> status: <strong>{job.status}</strong>.
+    <section className="wx-hero">
+      <div className="wx-hero__bg" aria-hidden="true" />
+      <div className="wx-grain" aria-hidden="true" />
+      <div className="wx-hero__content">
+        <p className="wx-eyebrow">Code Intelligence Platform</p>
+        <h1>
+          Understand any <span className="wx-hero__highlight">codebase</span>, instantly.
+        </h1>
+        <p className="wx-hero__sub">
+          Paste a public GitHub repository and get its architecture, dependency graph, and
+          change-impact analysis — structurally derived, not guessed.
         </p>
-      )}
-    </main>
+
+        <RepositoryInputForm onSubmit={handleAnalyze} isSubmitting={isSubmitting || isPolling} />
+
+        <div className="wx-chip-row">
+          <span>Try an example:</span>
+          {EXAMPLE_REPOSITORIES.map((url) => (
+            <button
+              key={url}
+              type="button"
+              className="wx-chip"
+              onClick={() => handleAnalyze(url)}
+              disabled={isSubmitting || isPolling}
+            >
+              {url.replace("https://github.com/", "")}
+            </button>
+          ))}
+        </div>
+
+        {error && (
+          <p className="wx-error" role="alert">
+            Error: {error}
+          </p>
+        )}
+
+        {job && isPolling && <ProgressChecklist currentStage={job.progress ?? null} />}
+
+        {job && !isPolling && !error && (
+          <p className="wx-job-status">
+            Analysis job <code>{job.id}</code> status: <strong>{job.status}</strong>.
+          </p>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -118,12 +133,17 @@ function ProgressChecklist({ currentStage }: { currentStage: string | null }) {
   const currentIndex = STAGES.findIndex((s) => s.key === currentStage);
 
   return (
-    <ul style={{ listStyle: "none", padding: 0, textAlign: "left", maxWidth: 320, margin: "1.5rem auto" }}>
+    <ul className="wx-progress-list">
       {STAGES.map((stage, index) => {
-        const symbol = currentIndex < 0 ? "○" : index < currentIndex ? "✓" : index === currentIndex ? "●" : "○";
+        const isDone = currentIndex >= 0 && index < currentIndex;
+        const isCurrent = index === currentIndex;
+        const symbol = isDone ? "✓" : isCurrent ? "●" : "○";
         return (
-          <li key={stage.key} style={{ opacity: currentIndex >= 0 && index > currentIndex ? 0.5 : 1 }}>
-            {symbol} {stage.label}
+          <li
+            key={stage.key}
+            className={isDone ? "wx-progress-list__done" : isCurrent ? "wx-progress-list__current" : undefined}
+          >
+            <span className="wx-progress-list__icon">{symbol}</span> {stage.label}
           </li>
         );
       })}
