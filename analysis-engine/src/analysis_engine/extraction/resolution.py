@@ -17,7 +17,18 @@ def _resolve_python_import(source_path: str, imp: Import, known_paths: set[str])
         if not imp.module:
             return None  # defensive; absolute imports always carry a module name
         base = imp.module.replace(".", "/")
-        candidates = (f"{base}.py", posixpath.join(base, "__init__.py"))
+        candidates = (
+            f"{base}.py",
+            posixpath.join(base, "__init__.py"),
+            # `src/`-layout: the installed package root lives under src/,
+            # but the import statement itself has no literal "src" in it
+            # (e.g. `import mypkg.foo` resolves, via an editable/built
+            # install, to src/mypkg/foo.py on disk). Harmless no-op when
+            # the repo doesn't use this layout -- these just won't be in
+            # known_paths.
+            posixpath.join("src", f"{base}.py"),
+            posixpath.join("src", base, "__init__.py"),
+        )
     else:
         # level=1 -> the importing file's own directory; each extra level
         # goes up one more parent.

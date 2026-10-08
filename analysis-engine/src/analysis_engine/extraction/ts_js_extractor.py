@@ -24,10 +24,30 @@ _CLASS_QUERY_BY_NAME_TYPE = {
 _INTERFACE_QUERY = "(interface_declaration name: (type_identifier) @name) @node"
 _TYPE_ALIAS_QUERY = "(type_alias_declaration name: (type_identifier) @name) @node"
 # Excludes member_expression callees (obj.method()) by construction --
-# method/attribute-call resolution is out of scope. Verified directly:
-# `(call_expression function: (identifier) @callee)` only matches plain
-# `foo()`-style calls, never `obj.method()`.
+# general attribute-call resolution is out of scope (needs type inference).
+# Verified directly: `(call_expression function: (identifier) @callee)`
+# only matches plain `foo()`-style calls, never `obj.method()`.
 _CALL_QUERY = "(call_expression function: (identifier) @callee) @node"
+# `name` is a real field on method_definition (verified directly against
+# the pinned grammar, same way as the other queries here) -- matches
+# instance AND static methods alike; static-ness isn't tracked separately.
+_METHOD_QUERY = "(method_definition name: (property_identifier) @name) @node"
+# `this.foo()` specifically -- resolvable without type inference because
+# `this` always refers to the enclosing class. General `obj.method()`
+# stays excluded (see _CALL_QUERY above).
+_THIS_CALL_QUERY = (
+    "(call_expression function: (member_expression object: (this) property: (property_identifier) @callee)) @node"
+)
+# CommonJS `require("./x")` -- a huge fraction of real-world JS (anything
+# not written with ES modules; e.g. Express) uses this exclusively, so
+# without it the module dependency graph is silently empty for such repos.
+# Matches ANY single-string-argument call by a bare identifier -- "require"
+# is checked in Python afterward (`#eq?` predicate support isn't assumed
+# for this pinned tree-sitter version, same verify-don't-assume approach as
+# every other query here).
+_REQUIRE_CALL_QUERY = (
+    "(call_expression function: (identifier) @fn arguments: (arguments (string (string_fragment) @module))) @node"
+)
 
 
 class _CompiledQueries:
@@ -41,6 +61,9 @@ class _CompiledQueries:
         self.import_ = Query(language, _IMPORT_QUERY)
         self.export_from = Query(language, _EXPORT_FROM_QUERY)
         self.call = Query(language, _CALL_QUERY)
+        self.method = Query(language, _METHOD_QUERY)
+        self.this_call = Query(language, _THIS_CALL_QUERY)
+        self.require_call = Query(language, _REQUIRE_CALL_QUERY)
         self.interface = Query(language, _INTERFACE_QUERY) if include_ts_only else None
         self.type_alias = Query(language, _TYPE_ALIAS_QUERY) if include_ts_only else None
 
@@ -90,6 +113,44 @@ def _symbols_from(query: Query, root: Node, kind: str) -> list[Symbol]:
         name = captures["name"][0].text.decode("utf-8")
         symbols.append(Symbol(name, kind, node.start_point.row + 1, node.end_point.row + 1))
     return symbols
+
+
+def _methods_from(query: Query, root: Node) -> list[Symbol]:
+    """One level of nesting only: methods whose immediate owner is a
+    top-level `class_declaration` (class_body -> method_definition, so the
+    method node's grandparent is the class). A method's own nested
+    functions are not extracted.
+    """
+    methods = []
+    for captures in _matches(query, root):
+        node = captures["node"][0]
+        class_body = node.parent
+        class_decl = class_body.parent if class_body is not None else None
+        if class_decl is None or class_decl.type != "class_declaration" or not _is_top_level(class_decl):
+            continue
+        class_name_node = class_decl.child_by_field_name("name")
+        if class_name_node is None:
+            continue
+        name = captures["name"][0].text.decode("utf-8")
+        methods.append(
+            Symbol(
+                name,
+                "method",
+                node.start_point.row + 1,
+                node.end_point.row + 1,
+                parent=class_name_node.text.decode("utf-8"),
+            )
+        )
+    return methods
+
+
+def _this_calls_from(query: Query, root: Node) -> list[CallSite]:
+    calls = []
+    for captures in _matches(query, root):
+        node = captures["node"][0]
+        callee = captures["callee"][0].text.decode("utf-8")
+        calls.append(CallSite(callee, node.start_point.row + 1, _containing_top_level_symbol(node), is_method_call=True))
+    return calls
 
 
 def _named_bindings(import_node: Node) -> list[tuple[str, str]]:
@@ -150,6 +211,72 @@ def _imports_from(query: Query, root: Node, *, with_bindings: bool) -> list[Impo
     return imports
 
 
+def _enclosing_statement(node: Node) -> Node | None:
+    current: Node | None = node
+    while current is not None:
+        if current.type in ("lexical_declaration", "variable_declaration", "expression_statement"):
+            return current
+        current = current.parent
+    return None
+
+
+def _is_top_level_require(call_node: Node) -> bool:
+    statement = _enclosing_statement(call_node)
+    return statement is not None and statement.parent is not None and statement.parent.type == "program"
+
+
+def _require_bindings(call_node: Node) -> list[tuple[str, str]]:
+    """Return (local_name, imported_name) pairs for `const {a, b: c} =
+    require("./x")`. Returns [] for `const foo = require("./x")` (the
+    whole module object is bound to `foo`, only ever used via `foo.member`
+    -- unresolvable, same policy as a default ES import) and for any other
+    shape (a bare side-effect `require("./x")`, or `module.exports =
+    require("./x")` passthrough) -- those still produce an import EDGE
+    (see _requires_from) but can't bind a call-resolvable name.
+    """
+    declarator = call_node.parent
+    if declarator is None or declarator.type != "variable_declarator":
+        return []
+    name_node = declarator.child_by_field_name("name")
+    if name_node is None or name_node.type != "object_pattern":
+        return []
+
+    bindings = []
+    for member in name_node.children:
+        if member.type == "shorthand_property_identifier_pattern":
+            name = member.text.decode("utf-8")
+            bindings.append((name, name))
+        elif member.type == "pair_pattern":
+            key_node = member.child_by_field_name("key")
+            value_node = member.child_by_field_name("value")
+            if key_node is not None and value_node is not None and value_node.type == "identifier":
+                bindings.append((value_node.text.decode("utf-8"), key_node.text.decode("utf-8")))
+    return bindings
+
+
+def _requires_from(query: Query, root: Node) -> list[Import]:
+    imports = []
+    for captures in _matches(query, root):
+        if captures["fn"][0].text.decode("utf-8") != "require":
+            continue
+        node = captures["node"][0]
+        if not _is_top_level_require(node):
+            continue
+
+        module = captures["module"][0].text.decode("utf-8")
+        line = node.start_point.row + 1
+        bindings = _require_bindings(node)
+
+        if bindings:
+            for local_name, imported_name in bindings:
+                imports.append(
+                    Import(module=module, level=0, line=line, local_name=local_name, imported_name=imported_name)
+                )
+        else:
+            imports.append(Import(module=module, level=0, line=line))
+    return imports
+
+
 def _containing_top_level_symbol(node: Node) -> str | None:
     """Walk up from a call site to the nearest enclosing top-level
     function/class declaration. Nested (non-top-level) functions/classes
@@ -190,6 +317,7 @@ def extract(source: bytes, path: Path) -> FileExtraction:
     symbols += _symbols_from(compiled.function, root, "function")
     symbols += _symbols_from(compiled.class_, root, "class")
     symbols += _symbols_from(compiled.variable, root, "variable")
+    symbols += _methods_from(compiled.method, root)
     if compiled.interface is not None:
         symbols += _symbols_from(compiled.interface, root, "interface")
     if compiled.type_alias is not None:
@@ -200,7 +328,8 @@ def extract(source: bytes, path: Path) -> FileExtraction:
     # `export { x } from "./y"` / `export * from "./y"` is the same module
     # dependency edge as an import for our purposes (module-level graph).
     imports += _imports_from(compiled.export_from, root, with_bindings=False)
+    imports += _requires_from(compiled.require_call, root)
 
-    calls = _calls_from(compiled.call, root)
+    calls = _calls_from(compiled.call, root) + _this_calls_from(compiled.this_call, root)
 
     return FileExtraction(symbols=symbols, imports=imports, calls=calls)

@@ -76,6 +76,13 @@ class File(Base):
     content_hash: Mapped[str | None] = mapped_column(String(64), default=None)
     raw_imports: Mapped[list | None] = mapped_column(JSON, default=None)
     raw_calls: Mapped[list | None] = mapped_column(JSON, default=None)
+    # Which analysis_engine.extraction.models.EXTRACTOR_VERSION produced
+    # raw_imports/raw_calls -- an incremental re-run must not reuse a
+    # content-hash match from an OLDER version (see pipeline.py's
+    # _build_file_summary), or upgrading the engine would silently keep
+    # serving pre-upgrade extraction results forever for already-analyzed
+    # repositories.
+    extractor_version: Mapped[int | None] = mapped_column(default=None)
 
     analysis: Mapped["Analysis"] = relationship(back_populates="files")
     symbols: Mapped[list["Symbol"]] = relationship(back_populates="file")
@@ -91,6 +98,9 @@ class Symbol(Base):
     kind: Mapped[str]
     line_start: Mapped[int]
     line_end: Mapped[int]
+    # Enclosing class name for kind="method", NULL for everything else --
+    # see analysis_engine.extraction.models.Symbol.parent.
+    parent: Mapped[str | None] = mapped_column(default=None)
 
     file: Mapped["File"] = relationship(back_populates="symbols")
 

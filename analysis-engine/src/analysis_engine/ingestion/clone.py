@@ -64,7 +64,18 @@ def clone_repository(ref: RepositoryRef, dest: Path, timeout_seconds: int) -> No
         raise CloneTimeoutError(f"Cloning {ref.clone_url} exceeded {timeout_seconds}s") from exc
 
     if result.returncode != 0:
-        raise CloneFailedError(f"git clone failed for {ref.clone_url}: {result.stderr.strip()}")
+        raise CloneFailedError(f"git clone failed for {ref.clone_url}: {_clean_clone_stderr(result.stderr)}")
+
+
+def _clean_clone_stderr(stderr: str) -> str:
+    """Drop git's own "Cloning into '<local tmp path>'..." progress line --
+    it's not an error, just noise that also happens to echo the server's
+    local scratch-directory path back into a message that ends up in the
+    GraphQL-exposed job.error_message. The actual reason (e.g. "remote:
+    Repository not found.") is always on the lines after it.
+    """
+    lines = [line for line in stderr.strip().splitlines() if not line.startswith("Cloning into ")]
+    return " ".join(lines).strip() or stderr.strip()
 
 
 def get_commit_sha(workspace: Path) -> str | None:

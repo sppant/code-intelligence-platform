@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from analysis_engine.graph.impact import affected_files, compute_risk_indicators, is_test_file
 from analysis_engine.graph.insights import compute_architecture_insights
 from backend.models import Analysis as AnalysisModel
+from backend.models import AnalysisJob as AnalysisJobModel
 from backend.models import DependencyEdge as DependencyEdgeModel
 from backend.models import File as FileModel
 from backend.models import Symbol as SymbolModel
@@ -32,6 +33,22 @@ class Repository:
         )
         return await build_analysis_type(session, row) if row else None
 
+    @strawberry.field
+    async def latest_job(self, info: strawberry.Info) -> "AnalysisJob | None":
+        """Most recent analysis_jobs row for this repository, regardless of
+        status -- lets the frontend show live progress (or a failure
+        message) for a repository that has no *completed* analysis yet,
+        instead of a dead-end "no analysis" state.
+        """
+        session: AsyncSession = info.context["session"]
+        row = await session.scalar(
+            select(AnalysisJobModel)
+            .where(AnalysisJobModel.repository_id == self.id)
+            .order_by(AnalysisJobModel.created_at.desc())
+            .limit(1)
+        )
+        return _to_job_type(row) if row else None
+
 
 @strawberry.type
 class AnalysisJob:
@@ -49,6 +66,17 @@ class AnalysisJob:
         return await build_analysis_type(session, row) if row else None
 
 
+def _to_job_type(job: AnalysisJobModel) -> AnalysisJob:
+    return AnalysisJob(
+        id=job.id,
+        repository_id=job.repository_id,
+        status=job.status,
+        error_message=job.error_message,
+        progress=job.progress,
+        created_at=job.created_at,
+    )
+
+
 @strawberry.type
 class CallReference:
     file_path: str
@@ -63,6 +91,7 @@ class Symbol:
     line_start: int
     line_end: int
     file_path: str
+    parent: str | None = None
 
     @strawberry.field
     async def callers(self, info: strawberry.Info) -> list[CallReference]:
@@ -184,7 +213,15 @@ async def build_analysis_type(session: AsyncSession, analysis_row: AnalysisModel
     symbols_by_file_id: dict[uuid.UUID, list[Symbol]] = {}
     for s in symbol_rows:
         symbols_by_file_id.setdefault(s.file_id, []).append(
-            Symbol(id=s.id, name=s.name, kind=s.kind, line_start=s.line_start, line_end=s.line_end, file_path=path_by_file_id[s.file_id])
+            Symbol(
+                id=s.id,
+                name=s.name,
+                kind=s.kind,
+                line_start=s.line_start,
+                line_end=s.line_end,
+                file_path=path_by_file_id[s.file_id],
+                parent=s.parent,
+            )
         )
 
     files = [
@@ -318,6 +355,7 @@ async def build_impact_analysis(session: AsyncSession, symbol_row: SymbolModel) 
             line_start=s.line_start,
             line_end=s.line_end,
             file_path=path_by_file_id[s.file_id],
+            parent=s.parent,
         )
         for s in affected_symbols_by_id.values()
     ]
@@ -341,6 +379,7 @@ async def build_impact_analysis(session: AsyncSession, symbol_row: SymbolModel) 
             line_start=symbol_row.line_start,
             line_end=symbol_row.line_end,
             file_path=symbol_file_path,
+            parent=symbol_row.parent,
         ),
         direct_callers=direct_callers,
         affected_files=sorted(affected_file_paths),

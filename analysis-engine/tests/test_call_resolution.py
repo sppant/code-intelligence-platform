@@ -6,6 +6,10 @@ def _fn(name: str) -> Symbol:
     return Symbol(name, "function", 1, 2)
 
 
+def _method(name: str, parent: str) -> Symbol:
+    return Symbol(name, "method", 1, 2, parent=parent)
+
+
 def test_resolve_calls_same_file():
     files = [
         ("a.py", "python", [_fn("foo"), _fn("bar")], [], [CallSite("bar", 1, "foo")]),
@@ -96,3 +100,66 @@ def test_resolve_calls_target_symbol_must_be_function_or_class():
     ]
     edges = resolve_calls(files)
     assert edges[0].target_path is None
+
+
+# --- method calls (self.foo() / this.foo()) ---
+
+
+def test_resolve_method_call_same_class():
+    files = [
+        (
+            "a.py",
+            "python",
+            [_method("a", "Foo"), _method("b", "Foo")],
+            [],
+            [CallSite("b", 1, "Foo", is_method_call=True)],
+        ),
+    ]
+    edges = resolve_calls(files)
+    assert len(edges) == 1
+    edge = edges[0]
+    assert edge.source_path == "a.py" and edge.source_symbol == "Foo"
+    assert edge.target_path == "a.py" and edge.target_symbol == "b"
+    assert edge.target_parent == "Foo"
+
+
+def test_resolve_method_call_unresolved_when_method_does_not_exist():
+    files = [
+        ("a.py", "python", [_method("a", "Foo")], [], [CallSite("missing", 1, "Foo", is_method_call=True)]),
+    ]
+    edges = resolve_calls(files)
+    assert edges[0].target_path is None and edges[0].target_symbol is None
+
+
+def test_resolve_method_call_disambiguates_same_named_methods_on_different_classes():
+    # Two classes in the SAME file both define __init__ -- a self.__init__()
+    # call inside Bar must resolve to Bar's __init__, not Foo's.
+    files = [
+        (
+            "a.py",
+            "python",
+            [_method("__init__", "Foo"), _method("__init__", "Bar"), _method("reset", "Bar")],
+            [],
+            [CallSite("__init__", 1, "Bar", is_method_call=True)],
+        ),
+    ]
+    edges = resolve_calls(files)
+    assert len(edges) == 1
+    edge = edges[0]
+    assert edge.source_symbol == "Bar" and edge.target_parent == "Bar"
+
+
+def test_resolve_method_call_never_matches_an_unrelated_top_level_function():
+    # self.foo() must NOT resolve against a same-named free function -- only
+    # an actual method of the enclosing class is a valid target.
+    files = [
+        (
+            "a.py",
+            "python",
+            [_fn("foo"), _method("a", "Foo")],
+            [],
+            [CallSite("foo", 1, "Foo", is_method_call=True)],
+        ),
+    ]
+    edges = resolve_calls(files)
+    assert edges[0].target_path is None and edges[0].target_symbol is None

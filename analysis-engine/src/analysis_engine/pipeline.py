@@ -6,7 +6,7 @@ from pathlib import Path
 from analysis_engine.detection.languages import detect_language, iter_source_files
 from analysis_engine.extraction import python_extractor, ts_js_extractor
 from analysis_engine.extraction.call_resolution import resolve_calls
-from analysis_engine.extraction.models import CallEdge, CallSite, DependencyEdge, Import, Symbol
+from analysis_engine.extraction.models import EXTRACTOR_VERSION, CallEdge, CallSite, DependencyEdge, Import, Symbol
 from analysis_engine.extraction.resolution import resolve_relationships
 from analysis_engine.ingestion.clone import (
     RepositoryRef,
@@ -99,7 +99,11 @@ def _build_file_summary(
     content_hash = _hash_file(raw)
     size_bytes = len(raw)
 
-    if previous is not None and previous.content_hash == content_hash:
+    if (
+        previous is not None
+        and previous.content_hash == content_hash
+        and previous.extractor_version == EXTRACTOR_VERSION
+    ):
         return (
             FileSummary(
                 path=rel_path,
@@ -111,6 +115,7 @@ def _build_file_summary(
                 content_hash=content_hash,
                 imports=previous.imports,
                 calls=previous.calls,
+                extractor_version=previous.extractor_version,
             ),
             True,
         )
@@ -127,6 +132,7 @@ def _build_file_summary(
             content_hash=content_hash,
             imports=imports,
             calls=calls,
+            extractor_version=EXTRACTOR_VERSION,
         ),
         False,
     )

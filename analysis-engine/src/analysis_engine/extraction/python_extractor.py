@@ -22,6 +22,14 @@ class _TopLevelVisitor(ast.NodeVisitor):
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         self.symbols.append(Symbol(node.name, "class", node.lineno, node.end_lineno or node.lineno))
+        # One level of nesting only: methods defined directly in the class
+        # body. A method's own nested functions are not extracted, matching
+        # this visitor's deliberate no-recursion-past-top-level design.
+        for member in node.body:
+            if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                self.symbols.append(
+                    Symbol(member.name, "method", member.lineno, member.end_lineno or member.lineno, parent=node.name)
+                )
 
     def visit_Assign(self, node: ast.Assign) -> None:
         for target in node.targets:
@@ -62,18 +70,28 @@ class _TopLevelVisitor(ast.NodeVisitor):
 
 def _collect_calls(node: ast.AST, current_symbol: str | None, calls: list[CallSite]) -> None:
     """Walk the full tree (unlike _TopLevelVisitor, which deliberately never
-    recurses) collecting every call to a plain name (ast.Attribute callees --
-    obj.method() -- are excluded; method/attribute-call resolution is out of
-    scope). `current_symbol` tracks the nearest *top-level* function/class a
-    call is nested inside: the `if current_symbol is None` guard means it's
-    set once, on the module -> top-level-def transition, and never
-    overwritten descending into nested defs/methods -- so a call inside a
-    method is correctly attributed to its enclosing top-level class/function,
-    not to the method itself (methods aren't extracted as symbols at all).
+    recurses) collecting every call to a plain name, plus the specific
+    `self.foo()` shape of attribute call (general `obj.method()` stays
+    excluded -- resolving an arbitrary attribute call needs type inference,
+    out of scope; `self.foo()` doesn't, since `self`'s class is always the
+    enclosing one). `current_symbol` tracks the nearest *top-level*
+    function/class a call is nested inside: the `if current_symbol is None`
+    guard means it's set once, on the module -> top-level-def transition,
+    and never overwritten descending into nested defs/methods -- so a call
+    inside a method is attributed to its enclosing top-level CLASS, not the
+    specific method (methods aren't individually tracked as a "containing
+    symbol", only as call resolution targets via Symbol.parent).
     """
     for child in ast.iter_child_nodes(node):
         if isinstance(child, ast.Call) and isinstance(child.func, ast.Name):
             calls.append(CallSite(child.func.id, child.lineno, current_symbol))
+        elif (
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Attribute)
+            and isinstance(child.func.value, ast.Name)
+            and child.func.value.id == "self"
+        ):
+            calls.append(CallSite(child.func.attr, child.lineno, current_symbol, is_method_call=True))
         child_symbol = current_symbol
         if current_symbol is None and isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             child_symbol = child.name

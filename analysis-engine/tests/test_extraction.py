@@ -12,9 +12,43 @@ def test_python_extractor_finds_top_level_function_and_class():
     source = "def foo():\n    pass\n\n\nclass Bar:\n    def method(self):\n        pass\n"
     result = python_extractor.extract(source)
     kinds_by_name = {s.name: s.kind for s in result.symbols}
-    assert kinds_by_name == {"foo": "function", "Bar": "class"}
-    # the nested method must NOT appear as a top-level symbol
-    assert "method" not in kinds_by_name
+    assert kinds_by_name == {"foo": "function", "Bar": "class", "method": "method"}
+
+
+def test_python_extractor_extracts_methods_with_parent_but_not_nested_functions():
+    source = (
+        "class Bar:\n"
+        "    def method_one(self):\n"
+        "        def inner():\n"
+        "            pass\n"
+        "        return inner\n"
+        "    async def method_two(self):\n"
+        "        pass\n"
+    )
+    result = python_extractor.extract(source)
+    methods = [s for s in result.symbols if s.kind == "method"]
+    assert {s.name for s in methods} == {"method_one", "method_two"}
+    assert all(s.parent == "Bar" for s in methods)
+    # one level of nesting only -- the method's own nested function isn't extracted
+    assert "inner" not in {s.name for s in result.symbols}
+
+
+def test_python_extractor_captures_self_method_calls_separately_from_plain_calls():
+    source = (
+        "class Bar:\n"
+        "    def a(self):\n"
+        "        self.b()\n"
+        "        plain()\n"
+        "    def b(self):\n"
+        "        pass\n"
+    )
+    result = python_extractor.extract(source)
+    self_call = next(c for c in result.calls if c.callee_name == "b")
+    plain_call = next(c for c in result.calls if c.callee_name == "plain")
+    assert self_call.is_method_call is True
+    assert self_call.containing_symbol == "Bar"
+    assert plain_call.is_method_call is False
+    assert plain_call.containing_symbol == "Bar"
 
 
 def test_python_extractor_finds_top_level_variables_only():
@@ -117,6 +151,40 @@ def test_ts_js_extractor_imports_and_export_from():
     assert modules == {"./foo", "./bar", "some-package"}
 
 
+def test_ts_js_extractor_require_produces_import_edges():
+    source = (
+        b"const foo = require('./foo');\n"
+        b"require('./sideeffect');\n"
+        b"module.exports = require('./passthrough');\n"
+        b"const pkg = require('some-package');\n"
+    )
+    result = ts_js_extractor.extract(source, Path("app.js"))
+    modules = {imp.module for imp in result.imports}
+    assert modules == {"./foo", "./sideeffect", "./passthrough", "some-package"}
+
+
+def test_ts_js_extractor_require_destructured_bindings_for_call_resolution():
+    source = b"const { a, b: bRenamed } = require('./bar');\n"
+    result = ts_js_extractor.extract(source, Path("app.js"))
+    bindings = {(i.local_name, i.imported_name) for i in result.imports}
+    assert bindings == {("a", "a"), ("bRenamed", "b")}
+
+
+def test_ts_js_extractor_require_simple_assignment_has_no_bindings():
+    # `const foo = require('./foo')` binds the WHOLE module object to foo,
+    # only ever used via foo.member -- unresolvable, like a default import.
+    source = b"const foo = require('./foo');\n"
+    result = ts_js_extractor.extract(source, Path("app.js"))
+    assert result.imports[0].local_name is None
+
+
+def test_ts_js_extractor_require_inside_a_function_is_not_extracted():
+    # top-level only, same policy as ES imports.
+    source = b"function f() {\n  const x = require('./x');\n  return x;\n}\n"
+    result = ts_js_extractor.extract(source, Path("app.js"))
+    assert result.imports == []
+
+
 def test_ts_js_extractor_named_import_bindings_for_call_resolution():
     source = b"import { foo } from './a';\nimport { bar as baz } from './b';\n"
     result = ts_js_extractor.extract(source, Path("app.js"))
@@ -159,6 +227,32 @@ def test_ts_js_extractor_excludes_attribute_calls():
     assert result.calls == []
 
 
+def test_ts_js_extractor_extracts_methods_with_parent_including_static():
+    source = b"class Foo {\n  bar() {}\n  static baz() {}\n}\n"
+    result = ts_js_extractor.extract(source, Path("app.js"))
+    methods = [s for s in result.symbols if s.kind == "method"]
+    assert {s.name for s in methods} == {"bar", "baz"}
+    assert all(s.parent == "Foo" for s in methods)
+
+
+def test_ts_js_extractor_does_not_extract_methods_of_a_nested_class():
+    # the owning class must itself be top-level -- a class defined inside a
+    # function body isn't, so its methods aren't extracted either.
+    source = b"function outer() {\n  class Inner {\n    method() {}\n  }\n  return Inner;\n}\n"
+    result = ts_js_extractor.extract(source, Path("app.js"))
+    assert [s.kind for s in result.symbols if s.kind == "method"] == []
+
+
+def test_ts_js_extractor_captures_this_method_calls_separately_from_plain_calls():
+    source = b"class Foo {\n  a() { this.b(); plain(); }\n  b() {}\n}\n"
+    result = ts_js_extractor.extract(source, Path("app.js"))
+    this_call = next(c for c in result.calls if c.callee_name == "b")
+    plain_call = next(c for c in result.calls if c.callee_name == "plain")
+    assert this_call.is_method_call is True
+    assert this_call.containing_symbol == "Foo"
+    assert plain_call.is_method_call is False
+
+
 # --- resolution ---
 
 
@@ -180,6 +274,30 @@ def test_resolve_python_unresolved_import_is_external():
     files = [("pkg/a.py", "python", [Import("requests", 0, 1)])]
     edges = resolve_relationships(files)
     assert edges == [DependencyEdge("pkg/a.py", None, "requests", "imports")]
+
+
+def test_resolve_python_absolute_import_falls_back_to_src_layout():
+    # `import mypkg.foo` with no literal "src" in the import itself, but
+    # the package physically lives under src/ (editable/built install).
+    files = [
+        ("src/mypkg/__init__.py", "python", []),
+        ("src/mypkg/foo.py", "python", []),
+        ("main.py", "python", [Import("mypkg.foo", 0, 1)]),
+    ]
+    edges = resolve_relationships(files)
+    by_source = {(e.source_path, e.target_path) for e in edges}
+    assert ("main.py", "src/mypkg/foo.py") in by_source
+
+
+def test_resolve_python_prefers_root_relative_over_src_layout_when_both_exist():
+    files = [
+        ("mypkg/foo.py", "python", []),
+        ("src/mypkg/foo.py", "python", []),
+        ("main.py", "python", [Import("mypkg.foo", 0, 1)]),
+    ]
+    edges = resolve_relationships(files)
+    by_source = {(e.source_path, e.target_path) for e in edges}
+    assert ("main.py", "mypkg/foo.py") in by_source
 
 
 def test_resolve_ts_js_relative_with_index_fallback():

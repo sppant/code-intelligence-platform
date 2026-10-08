@@ -36,7 +36,7 @@ async def load_previous_files(session: AsyncSession, repository_id: uuid.UUID) -
     symbols_by_file_id: dict[uuid.UUID, list[EngineSymbol]] = {}
     for s in symbol_rows:
         symbols_by_file_id.setdefault(s.file_id, []).append(
-            EngineSymbol(name=s.name, kind=s.kind, line_start=s.line_start, line_end=s.line_end)
+            EngineSymbol(name=s.name, kind=s.kind, line_start=s.line_start, line_end=s.line_end, parent=s.parent)
         )
 
     previous_files: dict[str, FileSummary] = {}
@@ -53,5 +53,6 @@ async def load_previous_files(session: AsyncSession, repository_id: uuid.UUID) -
             content_hash=f.content_hash,
             imports=[import_from_dict(d) for d in (f.raw_imports or [])],
             calls=[call_site_from_dict(d) for d in (f.raw_calls or [])],
+            extractor_version=f.extractor_version,
         )
     return previous_files

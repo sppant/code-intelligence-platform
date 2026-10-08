@@ -2,7 +2,7 @@ import uuid
 
 import strawberry
 from fastapi import BackgroundTasks
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from analysis_engine.ingestion.clone import validate_github_url
@@ -17,7 +17,7 @@ from backend.schema.types import AnalysisJob as AnalysisJobType
 from backend.schema.types import ImpactAnalysis as ImpactAnalysisType
 from backend.schema.types import Repository as RepositoryType
 from backend.schema.types import Symbol as SymbolType
-from backend.schema.types import build_analysis_type, build_impact_analysis
+from backend.schema.types import _to_job_type, build_analysis_type, build_impact_analysis
 
 
 def _to_repository_type(repo: RepositoryModel) -> RepositoryType:
@@ -27,17 +27,6 @@ def _to_repository_type(repo: RepositoryModel) -> RepositoryType:
         owner=repo.owner,
         name=repo.name,
         default_branch=repo.default_branch,
-    )
-
-
-def _to_job_type(job: AnalysisJob) -> AnalysisJobType:
-    return AnalysisJobType(
-        id=job.id,
-        repository_id=job.repository_id,
-        status=job.status,
-        error_message=job.error_message,
-        progress=job.progress,
-        created_at=job.created_at,
     )
 
 
@@ -52,6 +41,29 @@ class Query:
         session: AsyncSession = info.context["session"]
         repo = await session.get(RepositoryModel, id)
         return _to_repository_type(repo) if repo else None
+
+    @strawberry.field
+    async def repositories(self, info: strawberry.Info, limit: int = 20) -> list[RepositoryType]:
+        """Previously analyzed repositories, most recently active first.
+
+        "Active" is the most recent analysis_jobs row per repository (not
+        Repository.created_at), so a repository re-analyzed later bubbles
+        back to the top of the landing-page history list.
+        """
+        session: AsyncSession = info.context["session"]
+        last_activity = (
+            select(AnalysisJob.repository_id, func.max(AnalysisJob.created_at).label("last_activity"))
+            .group_by(AnalysisJob.repository_id)
+            .subquery()
+        )
+        stmt = (
+            select(RepositoryModel)
+            .join(last_activity, last_activity.c.repository_id == RepositoryModel.id)
+            .order_by(last_activity.c.last_activity.desc())
+            .limit(limit)
+        )
+        rows = (await session.scalars(stmt)).all()
+        return [_to_repository_type(r) for r in rows]
 
     @strawberry.field
     async def analysis_job(self, info: strawberry.Info, id: uuid.UUID) -> AnalysisJobType | None:
@@ -83,7 +95,15 @@ class Query:
             stmt = stmt.where(SymbolModel.kind == kind)
         rows = await session.execute(stmt)
         return [
-            SymbolType(id=s.id, name=s.name, kind=s.kind, line_start=s.line_start, line_end=s.line_end, file_path=path)
+            SymbolType(
+                id=s.id,
+                name=s.name,
+                kind=s.kind,
+                line_start=s.line_start,
+                line_end=s.line_end,
+                file_path=path,
+                parent=s.parent,
+            )
             for s, path in rows.all()
         ]
 

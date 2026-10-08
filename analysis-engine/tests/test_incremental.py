@@ -1,3 +1,4 @@
+import dataclasses
 from pathlib import Path
 
 from analysis_engine.pipeline import analyze_workspace
@@ -31,6 +32,27 @@ def test_unchanged_file_is_reused_and_changed_file_is_reprocessed(tmp_path: Path
     symbols_by_path = {f.path: [s.name for s in f.symbols] for f in second.files}
     assert symbols_by_path["a.py"] == ["foo"]  # reused verbatim
     assert symbols_by_path["b.py"] == ["bar", "baz"]  # reprocessed, new symbol present
+
+
+def test_stale_extractor_version_forces_reprocessing_even_with_unchanged_content(tmp_path: Path):
+    """A byte-identical file whose cached extraction came from an OLDER
+    EXTRACTOR_VERSION must NOT be reused -- otherwise, upgrading the engine
+    (e.g. adding method extraction) would silently keep serving pre-upgrade
+    extraction results for every already-analyzed repository forever,
+    since content hashing alone can't detect that the *logic* changed.
+    """
+    _write(tmp_path, "a.py", "def foo():\n    pass\n")
+
+    first = analyze_workspace(tmp_path)
+    assert first.files_reused == 0
+
+    stale_previous = {
+        f.path: dataclasses.replace(f, extractor_version=(f.extractor_version or 0) - 1) for f in first.files
+    }
+
+    second = analyze_workspace(tmp_path, previous_files=stale_previous)
+    assert second.files_reused == 0
+    assert second.files_reprocessed == 1
 
 
 def test_deleted_dependency_target_does_not_leave_dangling_edge(tmp_path: Path):

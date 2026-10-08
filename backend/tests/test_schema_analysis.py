@@ -229,6 +229,68 @@ async def test_analysis_exposes_incremental_fields():
         await _cleanup(ids)
 
 
+async def test_repository_latest_job_reflects_most_recent_job_regardless_of_status():
+    ids = await _make_analysis()
+    newer_job_id = None
+    try:
+        async with async_session_factory() as session:
+            newer_job = AnalysisJob(repository_id=ids["repo_id"], status="running", progress="cloning")
+            session.add(newer_job)
+            await session.commit()
+            newer_job_id = newer_job.id
+
+        async with async_session_factory() as session:
+            result = await schema.execute(
+                """
+                query($id: UUID!) {
+                  repository(id: $id) { latestJob { id status progress } }
+                }
+                """,
+                variable_values={"id": str(ids["repo_id"])},
+                context_value={"session": session, "background_tasks": None},
+            )
+        assert result.errors is None
+        latest_job = result.data["repository"]["latestJob"]
+        assert latest_job == {"id": str(newer_job_id), "status": "running", "progress": "cloning"}
+    finally:
+        if newer_job_id is not None:
+            async with async_session_factory() as session:
+                await session.execute(delete(AnalysisJob).where(AnalysisJob.id == newer_job_id))
+                await session.commit()
+        await _cleanup(ids)
+
+
+async def test_repositories_query_orders_by_most_recent_activity():
+    first = await _make_analysis()
+    second = await _make_analysis()
+    extra_job_id = None
+    try:
+        # Re-activity first by adding a newer job to it after second was created.
+        async with async_session_factory() as session:
+            extra_job = AnalysisJob(repository_id=first["repo_id"], status="completed")
+            session.add(extra_job)
+            await session.commit()
+            extra_job_id = extra_job.id
+
+        async with async_session_factory() as session:
+            result = await schema.execute(
+                """
+                query { repositories(limit: 50) { id } }
+                """,
+                context_value={"session": session, "background_tasks": None},
+            )
+        assert result.errors is None
+        ids_in_order = [r["id"] for r in result.data["repositories"]]
+        assert ids_in_order.index(str(first["repo_id"])) < ids_in_order.index(str(second["repo_id"]))
+    finally:
+        if extra_job_id is not None:
+            async with async_session_factory() as session:
+                await session.execute(delete(AnalysisJob).where(AnalysisJob.id == extra_job_id))
+                await session.commit()
+        await _cleanup(first)
+        await _cleanup(second)
+
+
 async def test_impact_analysis_flags_no_direct_callers():
     ids = await _make_analysis()
     try:

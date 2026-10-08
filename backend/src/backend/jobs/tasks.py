@@ -103,7 +103,11 @@ async def persist_analysis(session: AsyncSession, job: AnalysisJob, result: Anal
     # call_edges below can resolve path -> file_id and (path, name) ->
     # symbol_id without a flush per row.
     path_to_file_id: dict[str, uuid.UUID] = {}
-    symbol_id_by_path_name: dict[tuple[str, str], uuid.UUID] = {}
+    # Keyed by (path, parent, name) -- NOT just (path, name) -- so two
+    # classes in the same file that both define e.g. __init__ get distinct
+    # slots (parent = owning class name for a method, None for everything
+    # else; call_edges below look up source/target the same way).
+    symbol_id_by_path_name: dict[tuple[str, str | None, str], uuid.UUID] = {}
     for file_summary in result.files:
         file_id = uuid.uuid4()
         path_to_file_id[file_summary.path] = file_id
@@ -117,6 +121,7 @@ async def persist_analysis(session: AsyncSession, job: AnalysisJob, result: Anal
                 parse_ok=file_summary.parse_ok,
                 size_bytes=file_summary.size_bytes,
                 content_hash=file_summary.content_hash,
+                extractor_version=file_summary.extractor_version,
                 # Written for EVERY file (reused or not) -- a future
                 # incremental run needs every file's cache, not just the
                 # ones that happened to change this time.
@@ -126,10 +131,10 @@ async def persist_analysis(session: AsyncSession, job: AnalysisJob, result: Anal
         )
         for sym in file_summary.symbols:
             symbol_id = uuid.uuid4()
-            # first-definition-wins on a duplicate top-level name in one
+            # first-definition-wins on a duplicate (parent, name) in one
             # file (e.g. two functions named the same via conditional
             # branches) -- the call graph can only ever point at one of them.
-            symbol_id_by_path_name.setdefault((file_summary.path, sym.name), symbol_id)
+            symbol_id_by_path_name.setdefault((file_summary.path, sym.parent, sym.name), symbol_id)
             session.add(
                 Symbol(
                     id=symbol_id,
@@ -139,6 +144,7 @@ async def persist_analysis(session: AsyncSession, job: AnalysisJob, result: Anal
                     kind=sym.kind,
                     line_start=sym.line_start,
                     line_end=sym.line_end,
+                    parent=sym.parent,
                 )
             )
 
@@ -161,11 +167,14 @@ async def persist_analysis(session: AsyncSession, job: AnalysisJob, result: Anal
         )
 
     for call in result.call_edges:
+        # source_symbol is always a top-level name (the nearest enclosing
+        # class/function -- see CallSite.containing_symbol), never itself a
+        # method, so its parent key is always None.
         source_symbol_id = (
-            symbol_id_by_path_name.get((call.source_path, call.source_symbol)) if call.source_symbol else None
+            symbol_id_by_path_name.get((call.source_path, None, call.source_symbol)) if call.source_symbol else None
         )
         target_symbol_id = (
-            symbol_id_by_path_name.get((call.target_path, call.target_symbol))
+            symbol_id_by_path_name.get((call.target_path, call.target_parent, call.target_symbol))
             if call.target_path and call.target_symbol
             else None
         )

@@ -125,3 +125,48 @@ async def test_incremental_reuse_after_db_roundtrip_has_no_dangling_edge(tmp_pat
         assert edges_by_source["b.py"].external_module == "a"
     finally:
         await _cleanup(repo_id)
+
+
+async def test_persist_analysis_disambiguates_same_named_methods_across_classes(tmp_path: Path):
+    """Regression guard: two classes in the same file both define a `go`
+    method; a `self.go()` call inside Bar must persist a call edge pointing
+    at Bar's `go` DB row, not Foo's -- a naive (path, name) lookup keyed
+    only by name (ignoring which class a method belongs to) would silently
+    pick whichever of the two got inserted first.
+    """
+    _write(
+        tmp_path,
+        "a.py",
+        "class Foo:\n"
+        "    def go(self):\n"
+        "        pass\n"
+        "class Bar:\n"
+        "    def go(self):\n"
+        "        pass\n"
+        "    def run(self):\n"
+        "        self.go()\n",
+    )
+    cold = analyze_workspace(tmp_path)
+
+    repo_id, job_id = await _make_repo_and_job()
+    try:
+        async with async_session_factory() as session:
+            job = await session.get(AnalysisJob, job_id)
+            analysis = await persist_analysis(session, job, _as_analysis_result(cold))
+
+        async with async_session_factory() as session:
+            symbol_rows = (await session.scalars(select(Symbol).where(Symbol.analysis_id == analysis.id))).all()
+            bar_go = next(s for s in symbol_rows if s.name == "go" and s.parent == "Bar")
+            foo_go = next(s for s in symbol_rows if s.name == "go" and s.parent == "Foo")
+
+            call_edge = await session.scalar(
+                select(DependencyEdge).where(
+                    DependencyEdge.analysis_id == analysis.id,
+                    DependencyEdge.type == "calls",
+                    DependencyEdge.called_name == "go",
+                )
+            )
+            assert call_edge.target_symbol_id == bar_go.id
+            assert call_edge.target_symbol_id != foo_go.id
+    finally:
+        await _cleanup(repo_id)

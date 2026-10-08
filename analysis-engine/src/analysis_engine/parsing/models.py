@@ -14,3 +14,7 @@ class FileSummary:
     content_hash: str | None = None  # sha256 hex digest; None only for an unreadable file
     imports: list[Import] = field(default_factory=list)
     calls: list[CallSite] = field(default_factory=list)
+    # Which EXTRACTOR_VERSION produced symbols/imports/calls -- None for a
+    # file with no parser (content_hash set, nothing extracted) or a
+    # pre-migration row. See extraction.models.EXTRACTOR_VERSION.
+    extractor_version: int | None = None
