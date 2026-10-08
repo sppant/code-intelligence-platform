@@ -279,6 +279,71 @@
   margin: 0 auto 1.75rem;
 }
 
+/* ---------- Repository history (landing page) ---------- */
+
+.wx-history {
+  max-width: 1000px;
+  padding-top: 0;
+}
+
+.wx-history__title {
+  margin-top: 0;
+}
+
+.wx-history-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1rem;
+  margin-top: 1.25rem;
+}
+
+.wx-history-card {
+  display: block;
+  background: var(--wx-bg-card);
+  border: 1px solid var(--wx-border-subtle);
+  border-radius: var(--wx-radius-lg);
+  padding: 1.1rem 1.3rem;
+  color: var(--wx-text-primary);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.wx-history-card:hover {
+  text-decoration: none;
+  border-color: var(--wx-border-strong);
+  background: var(--wx-bg-card-hover);
+}
+
+.wx-history-card__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.wx-history-card__name {
+  font-family: var(--wx-font-mono);
+  font-weight: 600;
+  font-size: 0.95rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wx-history-card__time {
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  color: var(--wx-text-tertiary);
+}
+
+.wx-history-card__stats {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  font-size: 0.82rem;
+  color: var(--wx-text-secondary);
+}
+
 /* ---------- Repository input form ---------- */
 
 .wx-input-row {
@@ -482,6 +547,16 @@
   background: var(--wx-bg-card-hover);
 }
 
+.wx-search__result--status {
+  color: var(--wx-text-tertiary);
+  font-style: italic;
+  cursor: default;
+}
+
+.wx-search__result--status:hover {
+  background: transparent;
+}
+
 .wx-search__result-row {
   display: flex;
   align-items: baseline;
@@ -530,26 +605,13 @@
 }
 
 .wx-graph-card .react-flow__node {
-  background: var(--wx-bg-card);
-  border: 1px solid var(--wx-border-subtle);
-  border-radius: var(--wx-radius-md);
-  color: var(--wx-text-primary);
-  font-family: var(--wx-font-mono);
-  padding: 4px 10px;
-}
-
-.wx-graph-card .react-flow__node.wx-graph-node--dim {
-  opacity: 0.25;
+  background: transparent;
+  border: none;
+  padding: 0;
 }
 
 .wx-graph-card .react-flow__edge-path {
   stroke: var(--wx-text-tertiary);
-  opacity: 0.6;
-}
-
-.wx-graph-card .react-flow__edge.animated .react-flow__edge-path {
-  stroke: var(--wx-teal-bright);
-  opacity: 1;
 }
 
 .wx-graph-card .react-flow__controls {
@@ -574,6 +636,105 @@
 .wx-graph-card .react-flow__attribution {
   background: transparent;
   color: var(--wx-text-tertiary);
+}
+
+.wx-graph-card .react-flow__minimap {
+  background: var(--wx-bg-card);
+  border: 1px solid var(--wx-border-subtle);
+  border-radius: var(--wx-radius-sm);
+}
+
+/* ---------- Graph: custom file node ---------- */
+
+.wx-file-node {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 190px;
+  height: 40px;
+  padding: 0 0.7rem;
+  background: var(--wx-bg-card);
+  border: 1px solid var(--wx-border-subtle);
+  border-radius: var(--wx-radius-md);
+  color: var(--wx-text-primary);
+  font-family: var(--wx-font-mono);
+  font-size: 11px;
+  transition: opacity 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  cursor: pointer;
+}
+
+.wx-file-node__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.wx-file-node__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wx-file-node--dimmed {
+  opacity: 0.2;
+}
+
+.wx-file-node--selected {
+  border-color: var(--wx-text-primary);
+  box-shadow: 0 0 0 1px var(--wx-text-primary);
+}
+
+.wx-file-node--outgoing {
+  border-color: var(--wx-teal-bright);
+  box-shadow: 0 0 0 1px var(--wx-teal-bright);
+}
+
+.wx-file-node--incoming {
+  border-color: var(--wx-orange);
+  box-shadow: 0 0 0 1px var(--wx-orange);
+}
+
+.wx-file-node--matched {
+  border-color: var(--wx-teal-bright);
+  box-shadow: 0 0 8px rgba(87, 217, 184, 0.5);
+}
+
+/* ---------- Graph: toolbar + legend ---------- */
+
+.wx-graph-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.9rem;
+}
+
+.wx-graph-toolbar input {
+  max-width: 320px;
+  flex: 1;
+}
+
+.wx-graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+}
+
+.wx-graph-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--wx-text-secondary);
+}
+
+.wx-graph-legend__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
 }
 
 /* ---------- Misc ---------- */

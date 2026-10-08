@@ -20,7 +20,7 @@ export function SymbolList({ symbols, repositoryId }: { symbols: SymbolResult[];
         {symbols.map((symbol) => (
           <tr key={symbol.id}>
             <td>
-              <code>{symbol.name}</code>
+              <code>{symbol.parent ? `${symbol.parent}.${symbol.name}` : symbol.name}</code>
             </td>
             <td>{symbol.kind}</td>
             <td>

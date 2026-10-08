@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { client } from "../graphql/client";
 import { ARCHITECTURE_INSIGHTS_QUERY, type ArchitectureInsights } from "../graphql/operations";
 import { RepositoryNav } from "../components/RepositoryNav";
+import { NoAnalysisYet } from "../components/NoAnalysisYet";
 
 interface RepositoryInsightsResult {
   name: string;
@@ -28,18 +29,19 @@ export function ArchitectureInsightsPage() {
 
   if (!id) return null;
   if (loading) return <p className="wx-page">Loading...</p>;
+  if (!repository) return <p className="wx-page">Repository not found.</p>;
 
-  const insights = repository?.latestAnalysis?.architectureInsights;
+  const insights = repository.latestAnalysis?.architectureInsights;
 
   return (
     <main className="wx-page">
       <div className="wx-page__header">
         <p className="wx-eyebrow">Architecture Insights</p>
-        <h1>{repository?.name}</h1>
+        <h1>{repository.name}</h1>
       </div>
       <RepositoryNav repositoryId={id} />
 
-      {!insights && <p className="wx-empty">No completed analysis yet.</p>}
+      {!insights && <NoAnalysisYet repositoryId={id} />}
 
       {insights && (
         <>

@@ -6,6 +6,7 @@ import { RepositoryNav } from "../components/RepositoryNav";
 import { FileTree } from "../components/FileTree";
 import { SymbolList } from "../components/SymbolList";
 import { SymbolSearch } from "../components/SymbolSearch";
+import { NoAnalysisYet } from "../components/NoAnalysisYet";
 
 interface RepositoryFilesResult {
   name: string;
@@ -32,19 +33,20 @@ export function CodeExplorerPage() {
 
   if (!id) return null;
   if (loading) return <p className="wx-page">Loading...</p>;
+  if (!repository) return <p className="wx-page">Repository not found.</p>;
 
-  const analysis = repository?.latestAnalysis;
+  const analysis = repository.latestAnalysis;
   const selectedFile = analysis?.files.find((f) => f.path === selectedPath) ?? null;
 
   return (
     <main className="wx-page wx-page--wide">
       <div className="wx-page__header">
         <p className="wx-eyebrow">Code Explorer</p>
-        <h1>{repository?.name}</h1>
+        <h1>{repository.name}</h1>
       </div>
       <RepositoryNav repositoryId={id} />
 
-      {!analysis && <p className="wx-empty">No completed analysis yet.</p>}
+      {!analysis && <NoAnalysisYet repositoryId={id} />}
 
       {analysis && (
         <>

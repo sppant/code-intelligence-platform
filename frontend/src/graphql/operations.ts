@@ -26,6 +26,25 @@ export const ANALYSIS_JOB_STATUS_QUERY = `
   }
 `;
 
+export const REPOSITORIES_QUERY = `
+  query Repositories($limit: Int!) {
+    repositories(limit: $limit) {
+      id
+      name
+      owner
+      url
+      latestAnalysis {
+        createdAt
+        statistics {
+          totalFiles
+          totalLines
+          languages
+        }
+      }
+    }
+  }
+`;
+
 export const REPOSITORY_OVERVIEW_QUERY = `
   query RepositoryOverview($id: UUID!) {
     repository(id: $id) {
@@ -33,6 +52,12 @@ export const REPOSITORY_OVERVIEW_QUERY = `
       name
       owner
       url
+      latestJob {
+        id
+        status
+        errorMessage
+        progress
+      }
       latestAnalysis {
         id
         createdAt
@@ -65,6 +90,7 @@ export const REPOSITORY_FILES_QUERY = `
             id
             name
             kind
+            parent
             lineStart
             lineEnd
           }
@@ -100,6 +126,7 @@ export const SEARCH_SYMBOLS_QUERY = `
       id
       name
       kind
+      parent
       filePath
       lineStart
       lineEnd
@@ -133,6 +160,7 @@ export const IMPACT_ANALYSIS_QUERY = `
       symbol {
         name
         kind
+        parent
         filePath
       }
       directCallers {
@@ -143,6 +171,7 @@ export const IMPACT_ANALYSIS_QUERY = `
       affectedSymbols {
         name
         kind
+        parent
         filePath
       }
       affectedTests
@@ -163,6 +192,7 @@ export interface SymbolResult {
   id: string;
   name: string;
   kind: string;
+  parent: string | null;
   filePath?: string;
   lineStart: number;
   lineEnd: number;
@@ -190,11 +220,32 @@ export interface RepositoryStatistics {
   totalDependencyEdges: number;
 }
 
+export interface RepositorySummary {
+  id: string;
+  name: string;
+  owner: string;
+  url: string;
+  latestAnalysis: {
+    createdAt: string;
+    statistics: {
+      totalFiles: number;
+      totalLines: number;
+      languages: Record<string, number>;
+    };
+  } | null;
+}
+
 export interface Repository {
   id: string;
   name: string;
   owner: string;
   url: string;
+  latestJob: {
+    id: string;
+    status: string;
+    errorMessage: string | null;
+    progress: string | null;
+  } | null;
   latestAnalysis: {
     id: string;
     createdAt: string;
@@ -227,11 +278,12 @@ export interface ImpactAnalysis {
   symbol: {
     name: string;
     kind: string;
+    parent: string | null;
     filePath: string;
   };
   directCallers: CallReference[];
   affectedFiles: string[];
-  affectedSymbols: { name: string; kind: string; filePath: string }[];
+  affectedSymbols: { name: string; kind: string; parent: string | null; filePath: string }[];
   affectedTests: string[];
   riskIndicators: string[];
 }

@@ -1,17 +1,18 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { client } from "../graphql/client";
+import { client, summarizeError } from "../graphql/client";
 import { REPOSITORY_OVERVIEW_QUERY, type Repository } from "../graphql/operations";
 import { RepositoryNav } from "../components/RepositoryNav";
+import { AnalysisProgress } from "../components/AnalysisProgress";
+import { useJobPolling } from "../hooks/useJobPolling";
 
 export function RepositoryOverviewPage() {
   const { id } = useParams<{ id: string }>();
   const [repository, setRepository] = useState<Repository | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  const fetchRepository = useCallback(() => {
     if (!id) return;
-    setLoading(true);
     client
       .query<{ repository: Repository | null }>(REPOSITORY_OVERVIEW_QUERY, { id })
       .toPromise()
@@ -20,6 +21,21 @@ export function RepositoryOverviewPage() {
         setLoading(false);
       });
   }, [id]);
+
+  useEffect(() => {
+    setLoading(true);
+    fetchRepository();
+  }, [fetchRepository]);
+
+  const latestJob = repository?.latestJob ?? null;
+  const jobInFlight = latestJob?.status === "pending" || latestJob?.status === "running";
+
+  const { job: polledJob, pollError } = useJobPolling(jobInFlight ? latestJob!.id : null, () => {
+    // Refetch regardless of outcome: on success this picks up the newly
+    // completed analysis/statistics, on failure it picks up the updated
+    // latestJob.errorMessage -- same query either way.
+    fetchRepository();
+  });
 
   if (!id) return null;
   if (loading) return <p className="wx-page">Loading...</p>;
@@ -41,7 +57,20 @@ export function RepositoryOverviewPage() {
 
       <RepositoryNav repositoryId={id} />
 
-      {!stats && <p className="wx-empty">No completed analysis yet.</p>}
+      {!stats && jobInFlight && (
+        <div className="wx-card">
+          <p style={{ margin: "0 0 0.25rem" }}>Analysis in progress&hellip;</p>
+          <AnalysisProgress currentStage={polledJob?.progress ?? latestJob?.progress ?? null} />
+        </div>
+      )}
+
+      {!stats && !jobInFlight && latestJob?.status === "failed" && (
+        <p className="wx-error" role="alert">
+          Analysis failed: {summarizeError(latestJob.errorMessage ?? pollError ?? "Unknown error.")}
+        </p>
+      )}
+
+      {!stats && !jobInFlight && latestJob?.status !== "failed" && <p className="wx-empty">No completed analysis yet.</p>}
 
       {stats && (
         <>

@@ -32,16 +32,16 @@ export function ImpactAnalysisPage() {
       </div>
       <RepositoryNav repositoryId={id} />
 
+      <Link to={`/repository/${id}/explorer`} className="wx-back-link">
+        &larr; Back to Code Explorer
+      </Link>
+
       {!impact && <p className="wx-empty">Symbol not found.</p>}
 
       {impact && (
         <>
-          <Link to={`/repository/${id}/explorer`} className="wx-back-link">
-            &larr; Back to Code Explorer
-          </Link>
-
           <h2>
-            <code>{impact.symbol.name}</code>
+            <code>{impact.symbol.parent ? `${impact.symbol.parent}.${impact.symbol.name}` : impact.symbol.name}</code>
           </h2>
           <p>
             {impact.symbol.kind} &middot; {impact.symbol.filePath}
