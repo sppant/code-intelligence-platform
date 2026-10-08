@@ -1,8 +1,35 @@
 # Code Intelligence Platform
 
-Analyzes public Git repositories and builds a structured, queryable representation of their codebase — architecture, dependencies, symbols, and change impact.
+Analyzes public Git repositories and builds a structured, queryable representation of their codebase — architecture, dependencies, symbols, and change impact. Paste a GitHub URL, get a real, interactive map of the codebase: dependency graph, symbol index (down to methods), circular-dependency and fan-in/out analysis, and change-impact analysis for any function or class.
 
-> **Status:** repo ingestion, language detection, AST/tree-sitter symbol extraction, a module-level dependency graph, a (same-file + import-resolved) call graph, circular-dependency detection, architecture insights (fan-in/out, large/isolated files), change-impact analysis, content-hash-based incremental re-analysis, and a real performance benchmark suite, all persisted and queryable through GraphQL, with a Repository Overview, Code Explorer, interactive Architecture Graph, Architecture Insights, and Impact Analysis in the React UI — plus live-feeling job progress via polling. No Docker/Redis anywhere in the stack (see "Background jobs without a queue" below) -- it runs on plain Node + Python + PostgreSQL, matching the target shared-hosting deployment. The AI layer is a later milestone.
+> **Status:** feature-complete for its stated scope. Repo ingestion, language detection, AST/tree-sitter symbol extraction (including nested methods), a module-level dependency graph (ES modules **and** CommonJS `require()`), a same-file + import-resolved call graph (including `self`/`this` method calls), circular-dependency detection, architecture insights, change-impact analysis, and content-hash-based incremental re-analysis — all persisted and queryable through GraphQL, with a full React UI (repository history, live job progress, Code Explorer, an interactive Architecture Graph, Architecture Insights, and Impact Analysis), a WebXDevelop-branded design system, a real performance benchmark suite, Playwright E2E coverage of the critical user flow, and GitHub Actions CI. No Docker/Redis anywhere in the stack (see "Background jobs without a queue" below) — it runs on plain Node + Python + PostgreSQL, matching the target shared-hosting deployment. There is no AI/LLM layer in this project by design.
+
+## Screenshots
+
+| | |
+|---|---|
+| **Landing page** — analyze a repo, jump back into a recent one | **Repository Overview** — stats at a glance |
+| ![Landing page](docs/screenshots/landing.jpg) | ![Repository Overview](docs/screenshots/overview.jpg) |
+| **Code Explorer** — file tree, symbol search, nested methods | **Architecture Graph** — click a node to trace dependencies/dependents |
+| ![Code Explorer](docs/screenshots/code-explorer.jpg) | ![Architecture Graph](docs/screenshots/architecture-graph.jpg) |
+| **Architecture Insights** — circular dependencies, fan-in/out | **Impact Analysis** — blast radius of changing one symbol |
+| ![Architecture Insights](docs/screenshots/insights.jpg) | ![Impact Analysis](docs/screenshots/impact-analysis.jpg) |
+
+## Live demo
+
+Not yet deployed. The "Deploying to Plesk" section below documents the target deployment; once a live instance exists, its URL goes here.
+
+## Key features
+
+- **Paste a GitHub URL, get a real analysis** — no auth, no setup, a public repo is all it takes.
+- **Repository history** — every analyzed repository is listed on the landing page, ordered by most recent activity; click one to jump straight back into its dashboard without re-analyzing.
+- **Live job progress** — the UI polls the running job and shows which pipeline stage it's in (cloning → parsing → resolving imports → building call graph → persisting), with a graceful failure state (e.g. repo not found, clone timeout) instead of a dead end.
+- **Code Explorer** — a real file tree plus a per-file symbol table and a debounced cross-file symbol search, both aware of nested methods (`ClassName.method`).
+- **Architecture Graph** — an interactive, dagre-laid-out dependency graph: click a node to highlight its direct dependencies (teal) and dependents (orange), filter by path to spotlight matching files, a language-colored legend, a minimap, and pan/zoom controls. Large repos are automatically capped to the most-connected files so the graph stays readable and fast.
+- **Architecture Insights** — circular-dependency detection (iterative Tarjan's SCC), fan-in/fan-out ranking, and large-file/isolated-file call-outs, computed over the real persisted graph.
+- **Change-Impact Analysis** — for any function, class, or method: direct callers, the transitive set of affected files/symbols, affected tests, and plain-language risk indicators (e.g. "no test coverage found").
+- **Incremental re-analysis** — re-analyzing a previously-seen repository reuses unchanged files' parse/extraction results via content hashing, with no staleness risk (see below) and no new UI — it's the same mutation, just faster.
+- **WebXDevelop-branded UI** — a dark, two-accent (teal/orange) design system built from the actual WebXDevelop brand (logo, palette, typography) rather than a generic template, aiming for the polish level of tools like Linear, Vercel, or Sentry.
 
 ## Architecture
 
@@ -12,7 +39,7 @@ React / TypeScript / Vite  →  Python / FastAPI / GraphQL  →  PostgreSQL
 
 No Docker, no Redis, no message broker. The target production environment is shared Plesk hosting, which doesn't support custom daemons or containers, so the architecture is deliberately plain: a Python web process and a Postgres database, nothing else required to run it. See "Background jobs" below for how analysis work still happens off the request path without a queue.
 
-The Python analysis engine (`analysis-engine/`) is the deterministic source of truth. It parses source with real ASTs (`tree-sitter` for TS/JS, the stdlib `ast` module for Python), extracts top-level symbols (functions/classes/variables/interfaces/type-aliases) and import/export edges, and resolves those edges into a module-level dependency graph — it can answer structural questions like "what does this module depend on" entirely on its own, with no database and no LLM involved. (Call-graph resolution -- "who calls this function" -- is Day 3.) The backend persists what the engine produces; an optional AI layer (future work) only explains results the engine already computed — it never originates structural facts.
+The Python analysis engine (`analysis-engine/`) is the deterministic source of truth. It parses source with real ASTs (`tree-sitter` for TS/JS, the stdlib `ast` module for Python), extracts symbols (functions/classes/variables/interfaces/type-aliases, and one level of nesting — methods inside classes) and import/export edges (ES `import`/`export` **and** CommonJS `require()`), and resolves those edges into a module-level dependency graph — it can answer structural questions like "what does this module depend on" entirely on its own, with no database and no LLM involved. The backend persists what the engine produces. There is no AI/LLM layer anywhere in this stack.
 
 ```
 Repository URL
@@ -58,11 +85,25 @@ This also means Docker/a real queue can be introduced later without a rewrite: `
 
 Re-analyzing a repository that's been seen before is transparent and automatic — same `analyzeRepository` mutation, no new UI. The diffing strategy is **content-hash comparison, not git-commit diffing**: repositories are shallow-cloned (`git clone --depth 1`), so a true `git diff <old-sha> <new-sha>` isn't available without fetching more history, which would add clone time/complexity for a diff that hashing already gives for free.
 
-Each `File` row caches a `content_hash` (sha256) **and its raw extracted `imports`/`calls`** (`raw_imports`/`raw_calls` JSON columns — not just the resolved edges). On the next analysis, a file whose hash is unchanged reuses its cached `parse_ok`/symbols/imports/calls verbatim, skipping `ast.parse`/tree-sitter-parse and extraction entirely — confirmed as the real cost: both parsers independently re-parse from scratch today (once to check validity, once to extract). Resolution (`resolve_relationships`/`resolve_calls`) always re-runs over the **full current file set** regardless of what was reused, so a changed file's import can newly resolve to an unchanged file, and an unchanged file's previously-resolved import correctly becomes unresolved if its target was deleted elsewhere.
+Each `File` row caches a `content_hash` (sha256) **and its raw extracted `imports`/`calls`** (`raw_imports`/`raw_calls` JSON columns — not just the resolved edges), plus the `extractor_version` that produced them. On the next analysis, a file whose hash **and** extractor version both match is reused verbatim, skipping `ast.parse`/tree-sitter-parse and extraction entirely. The extractor-version check matters: it's what stops an *engine upgrade* (e.g. the nested-method extraction added in this project) from silently continuing to serve pre-upgrade extraction results for a repository that hasn't actually changed — a real staleness bug that content-hashing alone can't catch, since the file's bytes genuinely didn't change, only the logic that reads them did. Resolution (`resolve_relationships`/`resolve_calls`) always re-runs over the **full current file set** regardless of what was reused, so a changed file's import can newly resolve to an unchanged file, and an unchanged file's previously-resolved import correctly becomes unresolved if its target was deleted elsewhere.
 
 That last point matters: an earlier design considered just carrying forward each unchanged file's *previously-resolved* edges directly, skipping resolution entirely for those files — which is simpler but has a real bug (a dangling edge pointing at a file deleted elsewhere in the repo, while the file that referenced it stayed byte-identical). Caching the raw imports/calls and always re-running resolution costs a small amount of extra JSON storage per file, in exchange for **no staleness limitation at all** — every analysis, incremental or not, produces exactly the graph a full analysis would, just computed partly from cache. See `analysis_engine/pipeline.py::analyze_workspace` and `backend/src/backend/jobs/incremental.py`.
 
-`Analysis.commitSha` is also now populated (`git rev-parse HEAD` right after clone) — purely informational, never load-bearing for the diffing itself.
+`Analysis.commitSha` is also populated (`git rev-parse HEAD` right after clone) — purely informational, never load-bearing for the diffing itself.
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | React 19, TypeScript, Vite, React Router, `urql` (GraphQL client), `@xyflow/react` + `@dagrejs/dagre` (Architecture Graph) |
+| Backend | FastAPI, Strawberry GraphQL, SQLAlchemy 2.0 (async) + Alembic, Pydantic Settings |
+| Analysis engine | Pure Python; `ast` (stdlib) for Python, `tree-sitter` + `tree-sitter-javascript`/`tree-sitter-typescript` for TS/JS/JSX/TSX |
+| Database | PostgreSQL |
+| Testing | `pytest` (backend + analysis-engine, against a real local Postgres), Playwright (E2E) |
+| CI | GitHub Actions |
+| Package management | `uv` (Python workspace: `backend` + `analysis-engine`), `pnpm` (frontend) |
+
+No Docker, no Redis, no message broker — see "Architecture" above for why.
 
 ## Local development
 
@@ -98,7 +139,7 @@ cd frontend && pnpm dev
 - Backend REST health check: http://localhost:8000/health
 - Backend GraphQL: http://localhost:8000/graphql
 
-Try it: paste `https://github.com/pypa/sampleproject` into the landing page and click "Analyze Repository" — the page polls job status and automatically navigates to the Repository Overview once analysis completes, from which the Code Explorer (file tree + per-file symbols + search) and Architecture Graph (interactive, click-to-highlight) tabs are reachable. Or run the mutation directly:
+Try it: paste `https://github.com/pypa/sampleproject` (or click one of the example chips) into the landing page and click "Analyze Repository" — the page polls job status and automatically navigates to the Repository Overview once analysis completes, from which the Code Explorer, Architecture Graph, Architecture Insights, and (via any symbol's "View impact" link) Impact Analysis are all reachable from the same tab bar. Previously analyzed repositories reappear on the landing page under "Recently analyzed." Or run the mutation directly:
 
 ```bash
 curl -s -X POST http://localhost:8000/graphql -H "Content-Type: application/json" \
@@ -124,18 +165,31 @@ psql -U cip -d cip -h localhost -c "select status from analysis_jobs order by cr
 
 ## Monorepo layout
 
-- `frontend/` — React + TypeScript + Vite UI, GraphQL via `urql`.
+- `frontend/` — React + TypeScript + Vite UI, GraphQL via `urql`. `e2e/` holds the Playwright critical-flow test.
 - `backend/` — FastAPI + Strawberry GraphQL API, SQLAlchemy/Alembic persistence, in-process background tasks (see above). The **only** component that talks to Postgres.
-- `analysis-engine/` — pure Python library with no database dependency: repository ingestion (validated clone, size/timeout guards), language detection, per-file parsing, and symbol/import extraction resolved into a module-level dependency graph. Usable standalone (CLI, tests) without the web app.
+- `analysis-engine/` — pure Python library with no database dependency: repository ingestion (validated clone, size/timeout guards), language detection, per-file parsing, and symbol/import/call extraction resolved into a module-level dependency graph and a call graph. Usable standalone (CLI, tests) without the web app.
+- `.github/workflows/ci.yml` — GitHub Actions: backend + analysis-engine tests (against a real Postgres service container), frontend typecheck/build, and lint.
+- `docs/screenshots/` — the images embedded above.
 
 ## Testing
 
 ```bash
-uv run --project analysis-engine pytest analysis-engine/tests
-uv run --project backend pytest backend/tests   # exercises the real local Postgres
+uv run --project analysis-engine pytest analysis-engine/tests   # 80+ tests, no DB needed
+uv run --project backend pytest backend/tests                   # exercises the real local Postgres
 ```
 
-Fixture-free for now — tests exercise the clone/validation logic, language detection, both parsers (`ast` for Python, `tree-sitter` for TS/JS), symbol/import extraction and path resolution (Python absolute/relative imports, TS/JS relative specifiers with index-file fallback, external/unresolved imports), the job-claiming logic (including a concurrency test that two simultaneous claims on one job resolve to exactly one winner), incremental-analysis reuse (including a full DB-round-trip test for the dangling-edge correctness case above), and the GraphQL resolvers (nested analysis shape, symbol search, architecture insights, impact analysis) directly against a real local Postgres. Repo-level fixtures and Playwright E2E tests land with later milestones.
+Covers: clone/validation logic, language detection, both parsers (`ast` for Python, `tree-sitter` for TS/JS), symbol/import/call extraction and path resolution (Python absolute/relative imports plus a `src/`-layout fallback, TS/JS relative specifiers with index-file fallback, CommonJS `require()` including destructured bindings, external/unresolved imports), nested method extraction and `self`/`this` call resolution (including same-file-different-class disambiguation — two classes both defining `__init__` must resolve independently), the extractor-version staleness guard described above, the job-claiming logic (including a concurrency test that two simultaneous claims on one job resolve to exactly one winner), incremental-analysis reuse (including a full DB-round-trip test for the dangling-edge correctness case above), and the GraphQL resolvers (nested analysis shape, repository history ordering, live job status, symbol search, architecture insights, impact analysis) directly against a real local Postgres.
+
+**End-to-end (Playwright):**
+
+```bash
+cd frontend && pnpm exec playwright install chromium   # once
+pnpm run test:e2e
+```
+
+Runs against the real stack — frontend, backend, Postgres, and a real GitHub clone (`pypa/sampleproject`, kept tiny on purpose) — with both the backend (`uv run uvicorn backend.main:app --port 8000`) and a migrated Postgres already running (see "Local development" above). Covers the full critical path: paste a URL → analyze → progress → Repository Overview → Code Explorer (tree, search) → Architecture Graph → Architecture Insights → Impact Analysis → back to the landing page's repository history. Not part of CI (see below) since it needs a real network clone and a multi-process stack, not just a single service container.
+
+**CI** (`.github/workflows/ci.yml`, GitHub Actions, runs on every push/PR to `main`): backend + analysis-engine tests against a real `postgres:16` service container, frontend typecheck + build (`tsc -b && vite build`), and lint (`oxlint`).
 
 ## Performance benchmarks
 
@@ -150,9 +204,9 @@ uv run --project backend python backend/benchmarks/bench_graphql_query.py
 
 | Repo | Files | Lines | Full (s) | Incremental, 0-change (s) | Speedup | Files/sec (full) | Lines/sec (full) |
 |---|---|---|---|---|---|---|---|
-| pypa/sampleproject (small) | 12 | 370 | 1.11 | 0.84 | 1.3x | 11 | 332 |
-| psf/requests (medium) | 128 | 30763 | 1.68 | 1.49 | 1.1x | 76 | 18258 |
-| django/django (large) | 7085 | 1145188 | 10.66 | 6.08 | 1.8x | 665 | 107453 |
+| pypa/sampleproject (small) | 12 | 370 | 1.10 | 0.84 | 1.3x | 11 | 335 |
+| psf/requests (medium) | 128 | 30763 | 1.67 | 1.38 | 1.2x | 77 | 18432 |
+| django/django (large) | 7085 | 1145188 | 10.96 | 5.36 | 2.0x | 647 | 104532 |
 
 The speedup grows with repo size because clone/network time (unavoidable, not saved by incremental reuse — see "Incremental analysis" above) is a shrinking fraction of total time as parse/extract cost grows; for `sampleproject`'s 12 files, clone time dominates and there's little to save.
 
@@ -160,16 +214,20 @@ The speedup grows with repo size because clone/network time (unavoidable, not sa
 
 | Query | Avg (ms) | Median (ms) | p95 (ms) |
 |---|---|---|---|
-| Repository Overview (statistics) | 22.83 | 20.31 | 39.71 |
-| Architecture Insights (cycles/fan-in-out) | 24.41 | 20.66 | 41.47 |
+| Repository Overview (statistics) | 32.53 | 27.69 | 52.31 |
+| Architecture Insights (cycles/fan-in-out) | 34.19 | 28.08 | 57.73 |
 
 Architecture Insights runs real cycle-detection and fan-in/out computation over the persisted graph (not just a row dump) and costs barely more than the plain statistics query — the iterative Tarjan's SCC and fan-in/out passes are `O(files + edges)` and cheap at this scale relative to the DB round trip itself.
 
 ## Known limitations
 
-Import resolution is repo-root-relative only: a Python `src/` layout (import paths resolved via an installed package, not the physical directory tree) or a TypeScript path alias (`tsconfig.json` `paths`, workspace packages) won't resolve to an in-repo file even when the dependency is real -- it's recorded as an external/unresolved edge instead. Symbol extraction is top-level only (no nested functions/methods as their own symbols). See `analysis_engine/extraction/resolution.py`.
+- **Import resolution** covers the common cases (Python absolute/relative imports plus a `src/`-layout fallback; TS/JS relative specifiers with index-file fallback; CommonJS `require()` including destructured bindings) but not everything: a TypeScript path alias (`tsconfig.json` `paths`, workspace packages) won't resolve to an in-repo file even when the dependency is real — it's recorded as an external/unresolved edge instead. See `analysis_engine/extraction/resolution.py`.
+- **Symbol extraction** goes one level deep (top-level functions/classes/variables, and methods inside a class) but no further — a function nested inside another function, or a method's own nested helper, isn't extracted as its own symbol.
+- **Call resolution** handles plain-name calls (`foo()`) and `self.foo()`/`this.foo()` method calls, but not general attribute/method calls on an arbitrary object (`obj.method()` where `obj`'s type isn't statically known) — that needs type inference, out of scope. Python star imports (`from x import *`) and TypeScript default/namespace imports are deliberately unresolvable for the same reason: neither can be statically bound to a specific name without guessing.
+- **"Architectural boundary violations"** from the original spec's wishlist isn't attempted — it needs a concept of user-defined architectural layers this project doesn't have.
+- **No AI/LLM layer.** This is a deliberate project decision, not a missing milestone — every fact surfaced by the UI is computed deterministically by the analysis engine.
 
-The call graph only resolves plain-name calls (`foo()`) to a same-file or import-resolved top-level function/class -- method/attribute calls (`obj.method()`) are never resolved (no type inference), and neither are Python star imports (`from x import *`) or TypeScript default/namespace imports, since none of those can be statically bound to a specific name without guessing. "Architectural boundary violations" from the original spec's wishlist isn't attempted -- it needs a concept of user-defined architectural layers this project doesn't have. All of this is deliberate scope, not an oversight -- see `analysis_engine/extraction/call_resolution.py` and `analysis_engine/graph/insights.py`.
+All of the above is deliberate, documented scope — see `analysis_engine/extraction/call_resolution.py` and `analysis_engine/graph/insights.py`.
 
 ## Security model
 
