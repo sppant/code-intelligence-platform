@@ -19,6 +19,14 @@ from analysis_engine.ingestion.workspace import scratch_workspace
 from analysis_engine.parsing import python_parser, ts_js_parser
 from analysis_engine.parsing.models import FileSummary
 
+# Per-file parse guard, independent of enforce_size_cap's *total* repo
+# size cap: bounds the worst-case parse time/memory a single file can cost,
+# regardless of how small the rest of the repo is. 5MB comfortably covers
+# real hand-written source files; a file past this is far more likely to be
+# a generated bundle or data file wearing a source extension than code
+# worth parsing.
+DEFAULT_MAX_FILE_SIZE_MB = 5
+
 
 @dataclass(frozen=True)
 class WorkspaceAnalysis:
@@ -81,7 +89,11 @@ def _parse_file(
 
 
 def _build_file_summary(
-    path: Path, rel_path: str, language: str | None, previous: FileSummary | None
+    path: Path,
+    rel_path: str,
+    language: str | None,
+    previous: FileSummary | None,
+    max_file_size_bytes: int,
 ) -> tuple[FileSummary, bool]:
     """Read one file and either reuse a previous analysis's parse/extraction
     result (when its content hash is unchanged) or parse+extract fresh.
@@ -120,6 +132,31 @@ def _build_file_summary(
             True,
         )
 
+    if language in ("python", "javascript", "typescript") and size_bytes > max_file_size_bytes:
+        # A single pathologically large file (e.g. a generated bundle or a
+        # data file with a source extension) could still be under the
+        # *total* repo size cap (enforce_size_cap, checked before any
+        # parsing starts) but blow up tree-sitter/ast parse time or memory
+        # on its own -- this bounds that per file regardless of how small
+        # the rest of the repo is. parse_ok=False (not None, which means
+        # "no parser exists for this language") since a parser exists here
+        # but was deliberately not run.
+        return (
+            FileSummary(
+                path=rel_path,
+                language=language,
+                line_count=line_count,
+                parse_ok=False,
+                size_bytes=size_bytes,
+                symbols=[],
+                content_hash=content_hash,
+                imports=[],
+                calls=[],
+                extractor_version=EXTRACTOR_VERSION,
+            ),
+            False,
+        )
+
     parse_ok_value, symbols, imports, calls = _parse_file(path, language, raw)
     return (
         FileSummary(
@@ -142,6 +179,7 @@ def analyze_workspace(
     workspace: Path,
     on_progress: Callable[[str], None] | None = None,
     previous_files: dict[str, FileSummary] | None = None,
+    max_file_size_mb: int = DEFAULT_MAX_FILE_SIZE_MB,
 ) -> WorkspaceAnalysis:
     """Detect languages, parse, and extract top-level symbols, the module-
     level import dependency graph, and the (same-file + import-resolved)
@@ -169,6 +207,7 @@ def analyze_workspace(
         # next one, so it's folded into this one.
         on_progress("parsing_and_extracting")
 
+    max_file_size_bytes = max_file_size_mb * 1024 * 1024
     files: list[FileSummary] = []
     total_lines = 0
     files_reused = 0
@@ -176,7 +215,7 @@ def analyze_workspace(
         language = detect_language(path)
         rel_path = str(path.relative_to(workspace))
         previous = previous_files.get(rel_path) if previous_files else None
-        summary, reused = _build_file_summary(path, rel_path, language, previous)
+        summary, reused = _build_file_summary(path, rel_path, language, previous, max_file_size_bytes)
         files.append(summary)
         total_lines += summary.line_count
         if reused:
@@ -219,6 +258,7 @@ def run_pipeline(
     clone_timeout_seconds: int,
     on_progress: Callable[[str], None] | None = None,
     previous_files: dict[str, FileSummary] | None = None,
+    max_file_size_mb: int = DEFAULT_MAX_FILE_SIZE_MB,
 ) -> AnalysisResult:
     """Clone a repository and analyze it (see analyze_workspace).
 
@@ -244,7 +284,7 @@ def run_pipeline(
         commit_sha = get_commit_sha(workspace)
         enforce_size_cap(workspace, max_size_mb=max_size_mb)
 
-        ws = analyze_workspace(workspace, on_progress, previous_files)
+        ws = analyze_workspace(workspace, on_progress, previous_files, max_file_size_mb)
 
     return AnalysisResult(
         repository=ref,

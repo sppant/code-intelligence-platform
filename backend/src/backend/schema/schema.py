@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from analysis_engine.ingestion.clone import validate_github_url
 from backend.jobs.tasks import run_analysis_job
+from backend.rate_limit import enforce_rate_limit
 from backend.models import Analysis as AnalysisModel
 from backend.models import AnalysisJob
 from backend.models import File as FileModel
@@ -126,8 +127,10 @@ class Mutation:
         """
         session: AsyncSession = info.context["session"]
         background_tasks: BackgroundTasks = info.context["background_tasks"]
+        client_ip: str | None = info.context.get("client_ip")
 
         ref = validate_github_url(repo_url)
+        await enforce_rate_limit(session, client_ip)
         canonical_url = f"https://github.com/{ref.owner}/{ref.name}"
 
         repository = await session.scalar(
@@ -138,7 +141,7 @@ class Mutation:
             session.add(repository)
             await session.flush()
 
-        job = AnalysisJob(repository_id=repository.id, status="pending")
+        job = AnalysisJob(repository_id=repository.id, status="pending", client_ip=client_ip)
         session.add(job)
         await session.flush()
         await session.commit()

@@ -16,9 +16,12 @@ class Settings(BaseSettings):
     log_level: str = "info"
     env: str = "development"
     max_repo_size_mb: int = 500
+    max_file_size_mb: int = 5
     clone_timeout_seconds: int = 60
     frontend_origin: str = "http://localhost:5173"
     stale_job_threshold_minutes: int = 10
+    rate_limit_max_analyses: int = 5
+    rate_limit_window_minutes: int = 10
 
 
 settings = Settings()

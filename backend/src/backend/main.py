@@ -31,12 +31,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
+def get_client_ip(request: Request) -> str | None:
+    """Best-effort client IP for rate limiting (see backend.rate_limit).
+
+    Trusts X-Forwarded-For's first entry over the raw socket peer when
+    present: Plesk/Passenger deployments sit behind Apache/nginx, so
+    request.client.host would otherwise always be the local proxy. This is
+    an abuse-mitigation signal, not an auth boundary, so a spoofed header on
+    a misconfigured deployment just means a shared rate-limit bucket -- not
+    a security hole.
+    """
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else None
+
+
 async def get_context(
     request: Request,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    return {"session": session, "background_tasks": background_tasks}
+    return {
+        "session": session,
+        "background_tasks": background_tasks,
+        "client_ip": get_client_ip(request),
+    }
 
 
 app = FastAPI(title="Code Intelligence Platform API", lifespan=lifespan)

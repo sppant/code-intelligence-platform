@@ -58,6 +58,7 @@ async def execute_claimed_job(job_id: str) -> None:
             settings.clone_timeout_seconds,
             on_progress,
             previous_files,
+            settings.max_file_size_mb,
         )
     except AnalysisEngineError as exc:
         await _mark_failed(job_id, str(exc))

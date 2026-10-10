@@ -28,6 +28,12 @@ class AnalysisJob(Base):
     status: Mapped[str] = mapped_column(default="pending")
     error_message: Mapped[str | None] = mapped_column(default=None)
     progress: Mapped[str | None] = mapped_column(default=None)
+    # The client IP that requested this job, for rate limiting (see
+    # backend.rate_limit.enforce_rate_limit) -- nullable because it can't
+    # always be determined (e.g. a direct schema.execute call with no
+    # underlying HTTP request, as in tests) and rows from before this
+    # column existed have nothing to backfill it with.
+    client_ip: Mapped[str | None] = mapped_column(default=None)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(default=None)
     finished_at: Mapped[datetime | None] = mapped_column(default=None)
