@@ -2,7 +2,7 @@
 
 Analyzes public Git repositories and builds a structured, queryable representation of their codebase — architecture, dependencies, symbols, and change impact. Paste a GitHub URL, get a real, interactive map of the codebase: dependency graph, symbol index (down to methods), circular-dependency and fan-in/out analysis, and change-impact analysis for any function or class.
 
-> **Status:** feature-complete for its stated scope. Repo ingestion, language detection, AST/tree-sitter symbol extraction (including nested methods), a module-level dependency graph (ES modules **and** CommonJS `require()`), a same-file + import-resolved call graph (including `self`/`this` method calls), circular-dependency detection, architecture insights, change-impact analysis, and content-hash-based incremental re-analysis — all persisted and queryable through GraphQL, with a full React UI (repository history, live job progress, Code Explorer, an interactive Architecture Graph, Architecture Insights, and Impact Analysis), a WebXDevelop-branded design system, a real performance benchmark suite, Playwright E2E coverage of the critical user flow, and GitHub Actions CI. No Docker/Redis anywhere in the stack (see "Background jobs without a queue" below) — it runs on plain Node + Python + PostgreSQL, matching the target shared-hosting deployment. There is no AI/LLM layer in this project by design.
+> **Status:** feature-complete for its stated scope. Repo ingestion, language detection, AST/tree-sitter symbol extraction (including nested methods), a module-level dependency graph (ES modules **and** CommonJS `require()`), a same-file + import-resolved call graph (including `self`/`this` method calls), circular-dependency detection, architecture insights, change-impact analysis, and content-hash-based incremental re-analysis — all persisted and queryable through GraphQL, with a full React UI (repository history, live job progress, Code Explorer, an interactive Architecture Graph, Architecture Insights, and Impact Analysis), per-client-IP rate limiting on `analyzeRepository`, a WebXDevelop-branded design system, a real performance benchmark suite, Playwright E2E coverage of the critical user flow, and GitHub Actions CI. No Docker/Redis anywhere in the stack (see "Background jobs without a queue" below) — it runs on plain Node + Python + PostgreSQL, matching the target shared-hosting deployment. There is no AI/LLM layer in this project by design.
 
 ## Screenshots
 
@@ -66,7 +66,7 @@ GraphQL mutation (backend) ──creates──▶ analysis_jobs row (pending)
                               clone → detect languages → parse → extract symbols/imports → resolve graph
                                                 │
                                                 ▼
-                    persists Analysis + File + Symbol + DependencyEdge rows, job → completed/failed
+                    persists Analysis + File + Symbol + relationship (import and call edge) rows, job → completed/failed
 ```
 
 ### Background jobs without a queue
@@ -90,6 +90,21 @@ Each `File` row caches a `content_hash` (sha256) **and its raw extracted `import
 That last point matters: an earlier design considered just carrying forward each unchanged file's *previously-resolved* edges directly, skipping resolution entirely for those files — which is simpler but has a real bug (a dangling edge pointing at a file deleted elsewhere in the repo, while the file that referenced it stayed byte-identical). Caching the raw imports/calls and always re-running resolution costs a small amount of extra JSON storage per file, in exchange for **no staleness limitation at all** — every analysis, incremental or not, produces exactly the graph a full analysis would, just computed partly from cache. See `analysis_engine/pipeline.py::analyze_workspace` and `backend/src/backend/jobs/incremental.py`.
 
 `Analysis.commitSha` is also populated (`git rev-parse HEAD` right after clone) — purely informational, never load-bearing for the diffing itself.
+
+## GraphQL API
+
+Single endpoint at `/graphql` (plus a REST `/health`).
+
+| Operation | Purpose |
+|---|---|
+| `mutation analyzeRepository(repoUrl)` | Validate the URL, rate-limit, create a pending job, and schedule analysis |
+| `query analysisJob(id)` | Live job status and current pipeline stage |
+| `query repositories(limit)` | Repository history, most recent activity first |
+| `query repository(id)` / `analysis(id)` | Nested analysis data: files, symbols, dependency/call edges, statistics, insights, incremental stats |
+| `query searchSymbols(...)` | Cross-file symbol search |
+| `query impactAnalysis(symbolId)` | Callers, transitive blast radius, affected tests, risk indicators |
+
+Schema changes are managed with Alembic (`backend/alembic/versions/`, currently 9 migrations).
 
 ## Tech stack
 
@@ -174,11 +189,11 @@ psql -U cip -d cip -h localhost -c "select status from analysis_jobs order by cr
 ## Testing
 
 ```bash
-uv run --project analysis-engine pytest analysis-engine/tests   # 80+ tests, no DB needed
-uv run --project backend pytest backend/tests                   # exercises the real local Postgres
+uv run --project analysis-engine pytest analysis-engine/tests   # 80 tests, no DB needed
+uv run --project backend pytest backend/tests                   # 20 tests, exercises the real local Postgres
 ```
 
-Covers: clone/validation logic, language detection, both parsers (`ast` for Python, `tree-sitter` for TS/JS), symbol/import/call extraction and path resolution (Python absolute/relative imports plus a `src/`-layout fallback, TS/JS relative specifiers with index-file fallback, CommonJS `require()` including destructured bindings, external/unresolved imports), nested method extraction and `self`/`this` call resolution (including same-file-different-class disambiguation — two classes both defining `__init__` must resolve independently), the extractor-version staleness guard described above, the job-claiming logic (including a concurrency test that two simultaneous claims on one job resolve to exactly one winner), incremental-analysis reuse (including a full DB-round-trip test for the dangling-edge correctness case above), and the GraphQL resolvers (nested analysis shape, repository history ordering, live job status, symbol search, architecture insights, impact analysis) directly against a real local Postgres.
+Covers: clone/validation logic, language detection, both parsers (`ast` for Python, `tree-sitter` for TS/JS), symbol/import/call extraction and path resolution (Python absolute/relative imports plus a `src/`-layout fallback, TS/JS relative specifiers with index-file fallback, CommonJS `require()` including destructured bindings, external/unresolved imports), nested method extraction and `self`/`this` call resolution (including same-file-different-class disambiguation — two classes both defining `__init__` must resolve independently), the extractor-version staleness guard described above, per-client-IP rate limiting (blocks past the limit within the window, scoped per IP, skipped when the IP is unidentifiable), the job-claiming logic (including a concurrency test that two simultaneous claims on one job resolve to exactly one winner), incremental-analysis reuse (including a full DB-round-trip test for the dangling-edge correctness case above), and the GraphQL resolvers (nested analysis shape, repository history ordering, live job status, symbol search, architecture insights, impact analysis) directly against a real local Postgres.
 
 **End-to-end (Playwright):**
 
@@ -231,7 +246,7 @@ All of the above is deliberate, documented scope — see `analysis_engine/extrac
 
 ## Security model
 
-Repositories are untrusted input. Today's guards: strict URL validation (must be `https://github.com/<owner>/<repo>`, reconstructed into a canonical clone URL rather than ever passed raw to a shell), `git clone` via an explicit argument list (no `shell=True`), a hard clone timeout, a post-clone total-size cap plus a per-file size cap (`MAX_FILE_SIZE_MB`, skips parsing anything larger rather than handing a single pathologically large file to tree-sitter/`ast`), job-scoped scratch directories that are always cleaned up, and rate limiting on `analyzeRepository` (the only mutation that clones and runs a full analysis): at most `RATE_LIMIT_MAX_ANALYSES` per client IP per `RATE_LIMIT_WINDOW_MINUTES`, counted against `analysis_jobs.client_ip` in Postgres (not an in-memory counter) so it holds across Passenger worker-process recycles — see `backend/src/backend/rate_limit.py`. Secret scanning isn't applicable here: no raw file content is ever persisted or returned by the API, only structural metadata (paths, symbol names, line numbers, hashes). Sandboxed execution (isolating the parse step itself from a maliciously crafted file) and a full threat model are deferred to a later hardening pass.
+Repositories are untrusted input. Today's guards: strict URL validation (must be `https://github.com/<owner>/<repo>`, reconstructed into a canonical clone URL rather than ever passed raw to a shell), `git clone` via an explicit argument list (no `shell=True`), a hard clone timeout, a post-clone total-size cap plus a per-file size cap (`MAX_FILE_SIZE_MB`, skips parsing anything larger rather than handing a single pathologically large file to tree-sitter/`ast`), job-scoped scratch directories that are always cleaned up, and rate limiting on `analyzeRepository` (the only mutation that clones and runs a full analysis): at most `RATE_LIMIT_MAX_ANALYSES` per client IP per `RATE_LIMIT_WINDOW_MINUTES`, counted against `analysis_jobs.client_ip` in Postgres (not an in-memory counter) so it holds across Passenger worker-process recycles — see `backend/src/backend/rate_limit.py`. Secret scanning isn't applicable here: no raw file content is ever persisted or returned by the API, only structural metadata (paths, symbol names, line numbers, hashes). The client IP is taken from the first `X-Forwarded-For` entry when present (Plesk/Passenger sits behind a reverse proxy), falling back to the socket peer. That makes the limit an abuse-mitigation signal rather than a hard boundary: a client that can set that header directly can evade it, so the proxy should overwrite rather than append to it. Sandboxed execution (isolating the parse step itself from a maliciously crafted file) and a full threat model are deferred to a later hardening pass.
 
 ## Environment variables
 
